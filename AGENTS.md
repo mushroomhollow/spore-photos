@@ -23,6 +23,13 @@ separately (or use `docker/compose.yaml`, which builds them into one image).
 - The SPA talks to the API with **relative URLs** (`/api/...`). It must never
   hardcode a host: on Android the whole app is loaded *from* the server, and in
   development Vite proxies `/api` to the API port.
+- `Dashboard` mounts every page inside `<main className="flex-1 overflow-hidden">`,
+  so any page that can grow past the viewport **must bring its own scroll
+  container** — outer `flex flex-col h-full min-h-0`, inner `flex-1 overflow-y-auto
+  min-h-0` (see `AlbumsPage` and the gallery in `PhotosPage`). Without it the content
+  is silently clipped rather than scrolled: the grid grows past the viewport,
+  `scrollHeight` exceeds `clientHeight`, nothing moves, and no scrollbar appears to
+  hint that anything is missing.
 - The API can serve the built SPA itself (`spore-photos-server/index.js` serves
   `../spore-photos-client/dist` when present). A reverse proxy may serve it
   instead; both work.

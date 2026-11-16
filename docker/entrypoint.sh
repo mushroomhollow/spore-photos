@@ -6,7 +6,7 @@
 #
 # Environment (all optional except the PG_* set):
 #   PUID / PGID        run the app as this uid:gid (default 1000:1000)
-#   PICTURES_ROOT      photo library inside the container (default /data/library)
+#   PICTURES_ROOT      photo library inside the container (default /data/photos)
 #   CHOWN_RECURSIVE    "true" → chown -R the library on start. Slow on a large
 #                      library; only needed when the mount belongs to another uid
 #   SKIP_MIGRATE       "true" → never run db/init.js
@@ -22,7 +22,7 @@ esac
 
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
-PICTURES_ROOT="${PICTURES_ROOT:-/data/library}"
+PICTURES_ROOT="${PICTURES_ROOT:-/data/photos}"
 PG_HOST="${PG_HOST:-db}"
 PG_PORT="${PG_PORT:-5432}"
 # node -e reads process.env, so these must be exported, not just set.

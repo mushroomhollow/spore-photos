@@ -35,7 +35,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
-    PICTURES_ROOT=/data/library \
+    PICTURES_ROOT=/data/photos \
     PORT=4051
 
 WORKDIR /app
@@ -53,7 +53,7 @@ COPY spore-photos-public-share ./spore-photos-public-share
 COPY --from=client-build /app/spore-photos-client/dist ./spore-photos-client/dist
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod 0755 /usr/local/bin/entrypoint.sh && mkdir -p /data/library && chown -R node:node /data
+RUN chmod 0755 /usr/local/bin/entrypoint.sh && mkdir -p /data/photos && chown -R node:node /data
 
 EXPOSE 4051 4052
 

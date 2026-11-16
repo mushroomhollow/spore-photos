@@ -35,7 +35,6 @@ Everything lives in two places:
 |---|---|---|
 | Database | named volume `spore-photos_pgdata` | yes (`down -v` deletes it) |
 | Photos | `LIBRARY_PATH` on the host (default `docker/library`) | yes |
-
 ---
 
 ## 2. What runs
@@ -64,7 +63,7 @@ twice: for `$VAR` substitution and as the containers' environment.
 | `PG_PASSWORD` | — (**required**) | Database password. Letters, digits, `-_.` only |
 | `PG_DATABASE` | `spore_photos` | Database name (created on first start) |
 | `PG_USER` | `spore` | Database role (created on first start) |
-| `LIBRARY_PATH` | `./library` | Host path for the photo library |
+| `LIBRARY_PATH` | `./library` | Host path for the photo library, mounted at `/data/photos` inside the container |
 | `APP_PORT` | `4051` | Host port for the UI/API |
 | `TRUST_PROXY` | `false` | `true` only behind a reverse proxy you control |
 | `PUID` / `PGID` | `1000` / `1000` | uid:gid the app runs as inside the container |

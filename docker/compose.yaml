@@ -20,7 +20,7 @@ x-app: &app
   restart: unless-stopped
   env_file: .env
   volumes:
-    - ${LIBRARY_PATH:-./library}:/data/library
+    - ${LIBRARY_PATH:-./library}:/data/photos
 
 services:
   db:
@@ -45,7 +45,7 @@ services:
     environment:
       PORT: "4051"
       PG_HOST: db
-      PICTURES_ROOT: /data/library
+      PICTURES_ROOT: /data/photos
       # Where the /share proxy should send share links (the service below).
       SHARE_SERVER_HOST: share
       SHARE_SERVER_PORT: "4052"
@@ -63,7 +63,7 @@ services:
     environment:
       PORT: "4052"
       PG_HOST: db
-      PICTURES_ROOT: /data/library
+      PICTURES_ROOT: /data/photos
     depends_on:
       db:
         condition: service_healthy

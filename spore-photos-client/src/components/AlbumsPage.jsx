@@ -467,7 +467,8 @@ export default function AlbumsPage({ refreshTrigger }) {
   // Show collection view (albums filtered by collection)
   if (collectionView === 'collection' && activeCollection) {
     return (
-      <div>
+      <div className="flex flex-col h-full min-h-0">
+        <div className="flex-1 overflow-y-auto min-h-0">
         {successMsg && (
           <div className="flex items-center gap-2 bg-retro-mint/40 text-retro-navy text-sm font-semibold px-4 py-2.5 rounded-xl mb-4 border border-retro-mint">
             <Check size={16} className="text-retro-teal shrink-0" />
@@ -506,6 +507,8 @@ export default function AlbumsPage({ refreshTrigger }) {
           </div>
         )}
 
+        </div>
+
         {confirmDelete && <DeleteConfirmModal albumId={confirmDelete} onCancel={() => setConfirmDelete(null)} onConfirm={() => handleDeleteAlbum(confirmDelete)} />}
         {editingAlbum && <AlbumEditModal album={editingAlbum} collections={collections} onSave={handleEditAlbum} onClose={() => setEditingAlbum(null)} />}
       </div>
@@ -515,7 +518,8 @@ export default function AlbumsPage({ refreshTrigger }) {
   // ── Default: collections + uncategorized albums ────────
 
   return (
-    <div>
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex-1 overflow-y-auto min-h-0">
       {successMsg && (
         <div className="flex items-center gap-2 bg-retro-mint/40 text-retro-navy text-sm font-semibold px-4 py-2.5 rounded-xl mb-4 border border-retro-mint">
           <Check size={16} className="text-retro-teal shrink-0" />
@@ -590,6 +594,8 @@ export default function AlbumsPage({ refreshTrigger }) {
           )}
         </>
       )}
+
+      </div>
 
       {confirmDelete && <DeleteConfirmModal albumId={confirmDelete} onCancel={() => setConfirmDelete(null)} onConfirm={() => handleDeleteAlbum(confirmDelete)} />}
       {editingAlbum && <AlbumEditModal album={editingAlbum} collections={collections} onSave={handleEditAlbum} onClose={() => setEditingAlbum(null)} />}
