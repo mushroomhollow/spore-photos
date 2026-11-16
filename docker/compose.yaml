@@ -1,0 +1,77 @@
+# Spore-Photos — self-contained stack: API (+ web UI), public share, Postgres.
+#
+#   cd docker
+#   cp .env.example .env      # set PG_PASSWORD (and LIBRARY_PATH if you like)
+#   docker compose up -d --build
+#
+# Then open http://<host>:4051 and enter the setup token printed by:
+#   docker compose logs api | grep -i "setup token"
+#
+# Only port 4051 is published; the API proxies /share/* to the share service,
+# so one port serves the UI, the API and public share links.
+
+name: spore-photos
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  image: spore-photos:latest
+  restart: unless-stopped
+  env_file: .env
+  volumes:
+    - ${LIBRARY_PATH:-./library}:/data/library
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${PG_DATABASE:-spore_photos}
+      POSTGRES_USER: ${PG_USER:-spore}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?set PG_PASSWORD in docker/.env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  api:
+    <<: *app
+    command: ["api"]
+    environment:
+      PORT: "4051"
+      PG_HOST: db
+      PICTURES_ROOT: /data/library
+      # Where the /share proxy should send share links (the service below).
+      SHARE_SERVER_HOST: share
+      SHARE_SERVER_PORT: "4052"
+    ports:
+      - "${APP_PORT:-4051}:4051"
+    depends_on:
+      db:
+        condition: service_healthy
+      share:
+        condition: service_started
+
+  share:
+    <<: *app
+    command: ["share"]
+    environment:
+      PORT: "4052"
+      PG_HOST: db
+      PICTURES_ROOT: /data/library
+    depends_on:
+      db:
+        condition: service_healthy
+    # No published port on purpose: reachable only through the API's /share
+    # proxy. Uncomment to expose it directly (e.g. an external proxy that
+    # routes /share separately).
+    # ports:
+    #   - "${SHARE_PORT:-4052}:4052"
+
+volumes:
+  pgdata:

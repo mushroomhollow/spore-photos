@@ -1,0 +1,35 @@
+{
+  "_comment": "Copy to config/spore-photos.config.json and edit. Env vars override every value. See docs/INSTALL.md.",
+
+  "default": {
+    "server": {
+      "port": 4051,
+      "corsOrigin": "",
+      "trustProxy": false
+    },
+    "publicShare": {
+      "port": 4052
+    },
+    "database": {
+      "host": "localhost",
+      "port": 5432,
+      "name": "spore_photos",
+      "user": "spore",
+      "password": "change-me"
+    },
+    "storage": {
+      "picturesRoot": "/srv/spore-photos/library"
+    },
+    "setup": {
+      "token": ""
+    }
+  },
+
+  "development": {
+    "server": { "port": 3051 },
+    "publicShare": { "port": 3052 },
+    "database": { "name": "spore_photos_dev" }
+  },
+
+  "production": {}
+}

@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Production builds
+dist/
+.vite/
+build/
+
+# Sensitive security data
+spore-photos-server/data/whitelisted_ips.json
+spore-photos-server/data/auth_config.json
+spore-photos-server/data/trusted_devices.json
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Local deployment config (copy config/spore-photos.config.example.json)
+config/spore-photos.config.json
+
+# IDEs and system
+.vscode/
+.idea/
+.DS_Store
+*.log
+
+# Hermes
+.hermes/
+repo_skills_relative.txt
+all_skills.txt
+
+# Photo storage
+Pictures/
+
+# Mobile (Capacitor / Android) build artifacts
+spore-photos-mobile/android/app/build/
+spore-photos-mobile/android/.gradle/
+spore-photos-mobile/android/local.properties
+spore-photos-client/public/apk/
+
+# Python
+*.pyc
+__pycache__/

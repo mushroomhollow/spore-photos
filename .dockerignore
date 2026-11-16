@@ -1,0 +1,20 @@
+# Keep the build context small and reproducible: everything below is either
+# rebuilt inside the image or should never leave the host.
+# spore-photos-client/public/apk/ is NOT ignored — drop an APK there before
+# building and it ships with the image.
+.git
+.gitignore
+.github
+node_modules
+**/node_modules
+**/dist
+spore-photos-mobile
+docs
+*.md
+.env
+.env.*
+config/spore-photos.config.json
+docker/.env
+library
+data
+*.log

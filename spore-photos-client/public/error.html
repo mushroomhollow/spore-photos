@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Spore-Photos — Server setup</title>
+  <style>
+    :root {
+      --navy: #1f2a44;
+      --teal: #2f7d78;
+      --mint: #cfe8e2;
+      --white: #f7fbfa;
+      --red: #b3261e;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: var(--white);
+      color: var(--navy);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 24px 20px 40px;
+    }
+    .card {
+      width: 100%;
+      max-width: 480px;
+      background: var(--white);
+      border: 2px solid var(--mint);
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(31, 42, 68, 0.12);
+    }
+    h1 { font-size: 20px; margin: 0 0 6px; }
+    p { font-size: 14px; line-height: 1.5; color: var(--teal); margin: 0 0 14px; }
+    label { display: block; font-size: 12px; font-weight: 700; margin-bottom: 6px; opacity: 0.75; }
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 2px solid var(--mint);
+      border-radius: 10px;
+      font: inherit;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 14px;
+      color: var(--navy);
+      background: #fff;
+      outline: none;
+    }
+    input:focus { border-color: var(--teal); }
+    .hint { font-size: 12px; color: var(--teal); opacity: 0.85; margin-top: 8px; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    button {
+      font: inherit;
+      font-size: 14px;
+      font-weight: 700;
+      border-radius: 10px;
+      padding: 10px 16px;
+      cursor: pointer;
+      border: 2px solid transparent;
+    }
+    button.primary { background: var(--teal); color: #fff; }
+    button.secondary { background: transparent; border-color: var(--mint); color: var(--navy); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .msg {
+      display: none;
+      margin-top: 12px;
+      font-size: 12px;
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .msg.error { color: var(--red); background: rgba(179, 38, 30, 0.08); border: 1px solid rgba(179, 38, 30, 0.3); }
+    .msg.ok { color: var(--navy); background: rgba(207, 232, 226, 0.45); border: 1px solid var(--mint); }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    details { margin-top: 18px; border-top: 1px solid var(--mint); padding-top: 12px; }
+    summary { font-size: 13px; font-weight: 700; cursor: pointer; }
+    details p { margin: 8px 0 0; font-size: 12px; }
+    .bridge {
+      margin-top: 16px;
+      font-size: 11px;
+      color: var(--teal);
+      opacity: 0.7;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1 id="title">Server setup</h1>
+    <p id="intro">Enter the address of the Spore-Photos server you want to use.</p>
+
+    <label for="server-url">Server base URL</label>
+    <input id="server-url" type="url" inputmode="url" autocapitalize="none"
+           autocorrect="off" spellcheck="false"
+           placeholder="https://photos.example.com or http://100.x.y.z:4051" />
+
+    <div class="hint">
+      For a local server over Tailscale, use its reachable IP and port. The
+      address must serve the full Spore-Photos app, not just <code>/api</code>.
+    </div>
+
+    <div id="msg" class="msg"></div>
+
+    <div class="row">
+      <button id="save" class="primary" type="button">Save</button>
+      <button id="test" class="secondary" type="button">Test</button>
+      <button id="retry" class="secondary" type="button">Retry</button>
+      <button id="reset" class="secondary" type="button">Forget server</button>
+    </div>
+
+    <details>
+      <summary>Still stuck?</summary>
+      <p>
+        If the buttons above do nothing, reset the app manually:
+        Android Settings → Apps → Spore-Photos → Storage → <strong>Clear data</strong>.
+        Clearing <em>cache</em> is not enough — the saved address lives in app
+        data. The app then returns to this setup screen.
+      </p>
+    </details>
+
+    <div id="diag" class="msg"></div>
+
+    <div id="bridge" class="bridge">repair bridge: checking…</div>
+  </div>
+
+  <script>
+    (function () {
+      var titleEl = document.getElementById('title');
+      var introEl = document.getElementById('intro');
+      var input = document.getElementById('server-url');
+      var saveBtn = document.getElementById('save');
+      var retryBtn = document.getElementById('retry');
+      var resetBtn = document.getElementById('reset');
+      var msgBox = document.getElementById('msg');
+      var bridgeLine = document.getElementById('bridge');
+      var diagBox = document.getElementById('diag');
+      var testBtn = document.getElementById('test');
+
+      // Preferred: plain addJavascriptInterface bridge — registered on the
+      // WebView itself, so it is present on every page including this one.
+      // Fallback: the Capacitor plugin (only present on injected pages).
+      var native = null;
+      var plugin = null;
+      try {
+        if (window.SporeNative && typeof window.SporeNative.getServerUrl === 'function') {
+          native = window.SporeNative;
+        }
+      } catch (e) { native = null; }
+      try {
+        if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SporeFiles) {
+          plugin = window.Capacitor.Plugins.SporeFiles;
+        }
+      } catch (e) { plugin = null; }
+
+      bridgeLine.textContent = 'repair bridge: ' + (native ? 'native' : (plugin ? 'capacitor' : 'none'));
+
+      function show(kind, text) {
+        msgBox.className = 'msg ' + kind;
+        msgBox.textContent = text;
+        msgBox.style.display = 'block';
+      }
+
+      function showDiag(text, good) {
+        diagBox.className = 'msg ' + (good ? 'ok' : 'error');
+        diagBox.textContent = 'Connection test: ' + text;
+        diagBox.style.display = 'block';
+      }
+
+      function normalize(raw) {
+        var v = (raw || '').trim();
+        if (!v) return '';
+        if (!/^https?:\/\//i.test(v)) {
+          var hostPart = v.split('/')[0];
+          var hasPort = /:\d+$/.test(hostPart);
+          var privateHost = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.)/.test(hostPart);
+          var ipv4 = /^(\d{1,3}\.){3}\d{1,3}(:\d+)?$/.test(hostPart);
+          v = (hasPort || privateHost || ipv4) ? 'http://' + v : 'https://' + v;
+        }
+        return v.replace(/\/+$/, '').replace(/\/api$/i, '');
+      }
+
+      function isValid(url) {
+        if (!url) return true;
+        try {
+          var u = new URL(url);
+          return u.protocol === 'http:' || u.protocol === 'https:';
+        } catch (e) { return false; }
+      }
+
+      function noBridge() {
+        show('error', 'No native bridge on this page. Use the manual reset under “Still stuck?”.');
+      }
+
+      function restart() {
+        if (native) { native.restart(); return; }
+        if (plugin) { plugin.restartApp(); return; }
+      }
+
+      function savedUrl() {
+        if (native) { try { return native.getServerUrl() || ''; } catch (e) {} }
+        return '';
+      }
+
+      function runTest(url) {
+        if (!native || typeof native.testServer !== 'function') {
+          showDiag('not available in this build', false);
+          return;
+        }
+        showDiag('testing…', true);
+        setTimeout(function () {
+          var result = '';
+          try { result = native.testServer(url || ''); }
+          catch (e) { result = 'failed: ' + ((e && e.message) || e); }
+          showDiag(result, /^HTTP 2/.test(result));
+        }, 0);
+      }
+
+      // ── Copy depends on whether a server is already configured ──
+      var configured = savedUrl().length > 0;
+      if (configured) {
+        titleEl.textContent = 'Can’t reach your server';
+        introEl.textContent = 'The app couldn’t load from the server address it was ' +
+          'pointed at. Check that the server is running and reachable from this ' +
+          'device, then retry — or enter a different address.';
+        saveBtn.textContent = 'Save & Restart';
+      } else {
+        titleEl.textContent = 'Connect to your server';
+        introEl.textContent = 'Enter the address of the Spore-Photos server you want ' +
+          'to use. The app loads everything from that address, so it works with ' +
+          'your own server or a Tailscale IP.';
+        saveBtn.textContent = 'Connect';
+        // Nothing to retry or forget on first run.
+        retryBtn.style.display = 'none';
+        resetBtn.style.display = 'none';
+      }
+
+      // Seed the field with whatever is actually stored.
+      if (native) {
+        try { input.value = savedUrl(); } catch (e) {}
+      } else if (plugin && plugin.getServerUrl) {
+        plugin.getServerUrl().then(function (res) {
+          if (res && res.url) input.value = res.url;
+        }).catch(function () {});
+      }
+
+      saveBtn.addEventListener('click', function () {
+        if (!native && !plugin) { noBridge(); return; }
+        var next = normalize(input.value);
+        if (!next || !isValid(next)) {
+          show('error', 'Enter a valid http:// or https:// server address.');
+          return;
+        }
+        if (native) { native.setServerUrl(next); } else { plugin.setServerUrl({ url: next }); }
+        if (native) {
+          var stored = '';
+          try { stored = native.getServerUrl() || ''; } catch (e) {}
+          if (stored !== next) {
+            show('error', 'Could not save the address (stored "' + stored + '"). Use the manual reset under “Still stuck?”.');
+            return;
+          }
+        }
+        show('ok', 'Saved. Restarting…');
+        restart();
+      });
+
+      testBtn.addEventListener('click', function () {
+        runTest(normalize(input.value));
+      });
+
+      retryBtn.addEventListener('click', function () {
+        if (!native && !plugin) { noBridge(); return; }
+        show('ok', 'Retrying…');
+        restart();
+      });
+
+      resetBtn.addEventListener('click', function () {
+        if (!native && !plugin) { noBridge(); return; }
+        if (native) {
+          try { native.clearServerUrl(); } catch (e) {}
+        } else {
+          plugin.setServerUrl({ url: '' });
+        }
+        show('ok', 'Saved address cleared. Returning to setup…');
+        restart();
+      });
+
+      // Auto-diagnose a saved address so a failed load names its reason.
+      if (configured) runTest(savedUrl());
+    })();
+  </script>
+</body>
+</html>

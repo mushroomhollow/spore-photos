@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+/* Retro 70s Design Palette */
+@theme {
+  --color-retro-mint: #93d2bd;
+  --color-retro-navy: #066176;
+  --color-retro-teal: #099396;
+  --color-retro-orange: #f3702a;
+  --color-retro-cream: #ead4ab;
+  --color-retro-white: #fbfedf;
+  --color-retro-red: #e04237;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-retro-white);
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+}

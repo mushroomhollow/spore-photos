@@ -1,0 +1,9 @@
+{
+  "appId": "dev.mushroomhollow.photos",
+  "appName": "Spore-Photos",
+  "webDir": "../spore-photos-client/dist",
+  "server": {
+    "androidScheme": "https",
+    "errorPath": "error.html"
+  }
+}
