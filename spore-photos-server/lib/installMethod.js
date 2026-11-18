@@ -1,3 +1,5 @@
+const semver = require('./semver');
+
 /**
  * How was this instance installed, and what does upgrading look like here?
  *
@@ -75,8 +77,20 @@ function upgradeSteps(method, info = {}) {
   if (upgrade.breaking) {
     warnings.push('This release contains breaking changes — read the release notes before upgrading.');
   }
-  if (upgrade.minFrom && current && upgrade.minFrom) {
-    warnings.push(`Upgrade from at least v${String(upgrade.minFrom).replace(/^v/, '')} first.`);
+  // Compare, do not just print. A release that declares a hard minimum is only
+  // useful if an install below it is told so — previously every install got the
+  // same sentence, whatever it was running, which made the warning decoration.
+  // semver.compare returns null for an unusable version, and this payload carries
+  // the server's own VERSION, so the unknown case stays advisory rather than
+  // asserting something untrue.
+  if (upgrade.minFrom) {
+    const floor = String(upgrade.minFrom).replace(/^v/, '');
+    const behind = current ? semver.compare(current, floor) : null;
+    if (behind === -1) {
+      warnings.push(`This install is v${current}; upgrade to at least v${floor} before this release.`);
+    } else if (behind === null) {
+      warnings.push(`This release expects at least v${floor} — check your version before upgrading.`);
+    }
   }
   if (upgrade.migrations) {
     warnings.push(upgrade.migration

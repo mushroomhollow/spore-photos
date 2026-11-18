@@ -1,16 +1,16 @@
 {
   "_comment": "Describes this release to other installs. Read by the Version & Updates panel when an operator points their server at a URL serving this file. Generated from releases/<version>.md by scripts/build-release-json.js — edit the notes file, not this one.",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "released": "2026-11-18",
-  "notes": "This release is mostly about how you run it, not what it stores: the database schema is unchanged, and no migration ships with it. Upgrade the code, apply the schema (which is a no-op here), and restart. Take a backup first anyway. Reinstalling the Android app is required: the app you may have been running was signed with a key this project no longer ships, and the download it pointed at has gone. Build your own and your key updates it from then on.",
+  "notes": "Upgrade as usual — this is a code-only release. There is no database migration and no Android rebuild: the app shell has not changed since v2.0.0, so the APK you built keeps working. If you installed a manual checkout and were told to check out a tag that did not exist, that is fixed here, and v2.0.0's tag has been published as well — either version is now reachable by tag. Two things worth knowing about a tag checkout: it leaves you on a detached HEAD, so the next upgrade is the same two commands with a newer tag; and if your clone predates this project being re-published, `git pull` will fail with `refusing to merge unrelated histories` — `git fetch origin && git reset --hard origin/main` is the way through (keep any local changes first).",
   "upgrade": {
-    "breaking": true,
+    "breaking": false,
     "migrations": false,
-    "backupFirst": true,
-    "minFrom": "1.9.0"
+    "backupFirst": false
   },
   "android": {
     "version": "2.0.0",
-    "rebuild": true
-  }
+    "rebuild": false
+  },
+  "url": "https://github.com/mushroomhollow/spore-photos/releases/tag/v2.0.1"
 }

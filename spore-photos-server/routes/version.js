@@ -49,7 +49,7 @@ function resolveSource() {
  * is genuinely something to upgrade to, and it is derived from the check plus
  * how *this* install runs.
  */
-function buildStatusPayload({ current, install, source, check }) {
+function buildStatusPayload({ current, install, source, check, session = null, configPath = CONFIG_PATH }) {
   const payload = {
     current,
     install,
@@ -59,14 +59,19 @@ function buildStatusPayload({ current, install, source, check }) {
     // bare hostname. Empty = the UI falls back to the host it was served from.
     siteName: config.siteName || '',
     docs: installMethod.DOCS[install.method],
-    // Where the source is configured, so the panel can name the file rather
-    // than telling the operator to "see the config" — including the common case
-    // where that file does not exist yet and the example has to be copied.
-    configFile: CONFIG_PATH,
-    configFileExists: fs.existsSync(CONFIG_PATH),
-    configExample: 'config/spore-photos.config.example.json',
     sourceEnvVar: SOURCE_ENV_VAR,
   };
+
+  // The config file's absolute path, and whether it exists, are server-side
+  // filesystem detail: a non-admin can read this panel (deliberately — hiding it
+  // would mean only admins ever learn an upgrade exists) but cannot edit that
+  // file, so there is nothing to gain by disclosing where it lives. The panel
+  // already falls back to generic wording when the path is absent.
+  if (session && session.role === 'admin') {
+    payload.configFile = configPath;
+    payload.configFileExists = fs.existsSync(configPath);
+    payload.configExample = 'config/spore-photos.config.example.json';
+  }
 
   if (check.ok && check.updateAvailable) {
     payload.upgrade = installMethod.upgradeSteps(install.method, {
@@ -106,7 +111,7 @@ router.get('/status', async (req, res) => {
     const check = await updateCheck.getStatus({ force, source: source.url });
     const install = installMethod.detect();
 
-    res.json(buildStatusPayload({ current, install, source, check }));
+    res.json(buildStatusPayload({ current, install, source, check, session }));
   } catch (error) {
     console.error('[Version] Status error:', error);
     res.status(500).json({ error: 'Failed to check for updates' });
@@ -114,3 +119,6 @@ router.get('/status', async (req, res) => {
 });
 
 module.exports = router;
+// Exported for the payload tests: the admin/non-admin split and the upgrade
+// derivation are the parts worth asserting without a database.
+module.exports.buildStatusPayload = buildStatusPayload;

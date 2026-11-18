@@ -429,6 +429,31 @@ curl -s localhost:4051/api/health                   # confirm the new version
 > outstanding. `db:init` exits non-zero if a migration fails, and the schema is
 > not left half-applied to a running server.
 
+The same steps, the way the panel generates them for a manual install — this is
+what *Settings → Server → Version & Updates* will hand you, with the version
+filled in:
+
+```bash
+cd /opt/spore-photos
+git fetch --tags && git checkout v2.1.0     # the release you were told about
+cd spore-photos-server && npm ci --omit=dev
+npm run db:status                           # what this release still has to run
+npm run db:init                             # applies it, once
+cd ../spore-photos-client && npm ci && npm run build
+cd ../spore-photos-public-share && npm ci --omit=dev
+sudo systemctl restart spore-photos spore-photos-share
+```
+
+> Checking out a tag leaves you on a **detached HEAD**, which is fine and
+> intentional — the next upgrade is the same two commands with a newer tag. If you
+> would rather track a branch, use `git pull` instead of the fetch/checkout pair;
+> either way the release you run is the one you asked for.
+>
+> **Cloned this project before it was re-published?** Then `git pull` fails with
+> `refusing to merge unrelated histories` — the repository was recreated, so the
+> two histories have nothing in common. Keep any local changes, then:
+> `git fetch origin && git reset --hard origin/main`.
+
 > With a dedicated service user the **checkout belongs to that user**, so
 > `git pull` and the `npm` steps have to run as it (`sudo -u spore …`), not as
 > you. The service only needs read access at runtime; it is the upgrade that

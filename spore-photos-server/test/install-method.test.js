@@ -67,6 +67,22 @@ test('a migration is named, not warned about in the abstract', () => {
   assert.ok(unnamed.warnings.some((w) => /migration/i.test(w)), 'still warns without the filename');
 });
 
+test('minFrom is compared against the running version, not just printed', () => {
+  const behind = upgradeSteps('docker', { latest: '3.0.0', current: '1.9.0', upgrade: { minFrom: '2.0.0' } });
+  assert.ok(behind.warnings.some((w) => w.includes('v1.9.0') && w.includes('v2.0.0')),
+    'names both versions when this install is below the floor');
+
+  const atFloor = upgradeSteps('docker', { latest: '3.0.0', current: '2.0.0', upgrade: { minFrom: '2.0.0' } });
+  assert.equal(atFloor.warnings.length, 0, 'silent at exactly the floor');
+
+  const ahead = upgradeSteps('docker', { latest: '3.0.0', current: '2.5.0', upgrade: { minFrom: '2.0.0' } });
+  assert.equal(ahead.warnings.length, 0, 'silent when ahead of it');
+
+  const unknown = upgradeSteps('docker', { latest: '3.0.0', upgrade: { minFrom: '2.0.0' } });
+  assert.ok(unknown.warnings.some((w) => w.includes('expects at least')),
+    'advisory, not a claim, when the running version is unknown');
+});
+
 test('the upgrade path is describable with nothing to upgrade to', () => {
   // Used by the panel before an update exists: `latest` is null, so no version
   // is named and the steps stay general.

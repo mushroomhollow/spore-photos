@@ -11,8 +11,9 @@
  * release notes are the source, so the panel text, the upgrade flags and the
  * docs cannot drift apart.
  *
- * Run by scripts/release.sh as part of cutting a release, and by
- * scripts/check-release.js to detect drift.
+ * Run by the maintainer-side release process (`release.sh`, which lives outside
+ * this repository) as part of cutting a release, and by `check-release.js` to
+ * detect drift.
  */
 
 const fs = require('fs');

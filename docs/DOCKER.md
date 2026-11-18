@@ -193,6 +193,11 @@ docker compose exec api npm run db:init         # apply (or just: up -d, on star
 `VERSION` is baked into the image; if a stale client bundle is served alongside a
 newer server the UI shows a version-mismatch banner.
 
+> **If `git pull` fails with `refusing to merge unrelated histories`**, your clone
+> predates this repository being re-published, so the two histories share nothing.
+> Keep any local changes, then `git fetch origin && git reset --hard origin/main`
+> and continue with the build above.
+
 ---
 
 ## 7. Backup and restore

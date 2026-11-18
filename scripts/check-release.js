@@ -14,8 +14,8 @@
  *   - release.json edited by hand      → the panel and the notes disagree
  *   - two migrations for one release   → an arbitrary order on a real database
  *
- * Wired into scripts/release.sh (before the commit) and
- * scripts/check-version-sync.sh (before a deploy).
+ * Wired into the release process (maintainer-side `release.sh`, which is not part
+ * of this repository) and into `check-version-sync.sh`, which lives beside it.
  */
 
 const fs = require('fs');
@@ -78,7 +78,14 @@ if (current) {
     problem(`releases/${version}.md declares upgrade.migrations: true but there is no db/migrations/${version}-*.sql`);
   }
   for (const file of otherVersioned) {
-    problem(`db/migrations/${file} belongs to a future or past release — this tree is ${version}`);
+    // Older migrations may stay in place: an applied migration is the record of
+    // what ran, and relocating it must not fail every later release. Only a
+    // migration from a *newer* release is a mistake — that file belongs to a tree
+    // that has not shipped yet.
+    const fileVersion = file.split('-')[0];
+    if (semver.compare(fileVersion, version) === 1) {
+      problem(`db/migrations/${file} belongs to a release newer than this tree (${version})`);
+    }
   }
   if (mine.length) ok(`migration for ${version}: ${mine[0]}`);
 

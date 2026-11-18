@@ -1,6 +1,6 @@
 {
   "name": "spore-photos-server",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Self-hosted photo library API — auth, photo ingest, albums, sharing",
   "license": "Unlicense",
   "engines": {

@@ -7,6 +7,34 @@ All notable changes to Spore-Photos are recorded here. The format follows
 The release script puts the newest section into `release.json`, which is what
 other installs read when they check for updates.
 
+## [2.0.1] — 2026-11-18
+
+### Fixed
+
+- **The generated manual-install steps now work.** They say
+  `git fetch --tags && git checkout vX.Y.Z`, and the public repository had no
+  tags, so that path failed with `pathspec did not match` for anyone following the
+  panel. The export now publishes the release tag, and it is published for 2.0.0
+  retroactively.
+- **`upgrade.minFrom` is compared, not just printed.** Every install was shown the
+  same "upgrade from at least …" sentence whatever it was running; now the warning
+  appears only for an install that is actually below the floor, names both
+  versions, and stays advisory when the running version is unknown.
+- **An applied migration may live in `db/archive/`.** Previously the release gate
+  rejected any migration file belonging to another release while the runner
+  reported a moved file as missing, so the first release to ship a migration had
+  no clean place to keep the previous one.
+- **The config file's path is sent only to an admin.** It is server-side
+  filesystem detail and a non-admin cannot edit that file; the panel falls back to
+  generic wording.
+- `release.json` now carries the `url` its documentation promises, so the panel's
+  "Release notes" link renders.
+- `docker/entrypoint.sh`'s comment describes the migration model 2.0.0 introduced,
+  rather than the one it replaced.
+- The headers of `check-release.js` and `build-release-json.js` no longer imply
+  that `release.sh` and `check-version-sync.sh` ship in this repository — they are
+  maintainer-side and live outside it.
+
 ## [2.0.0] — 2026-11-18
 
 ### Added
@@ -80,11 +108,10 @@ other installs read when they check for updates.
   since — by an older file running again on a database that had moved on. Each
   migration now runs once, and `spore-photos-server/test/migrations.sh`
   demonstrates both the hazard and its absence.
-- **Upgrade instructions are generated for the install shape**, and were wrong in
-  two ways that this release fixes rather than ships: the Docker steps omitted
-  `--build` (the image is built from your checkout, so `pull` + `up -d` silently
-  keeps the old version), and the manual steps never ran `db:init` (the service
-  does not migrate at boot).
+- **Upgrade instructions are generated for the install shape.** The Docker steps
+  include `--build` — the image is built from your checkout, so `pull` + `up -d`
+  alone would silently keep the old version — and the manual steps run `db:init`
+  with `db:status` first, because the service does not migrate at boot.
 - `release.json` is generated from the release notes by
   `scripts/build-release-json.js`, so the panel text, the upgrade flags and the
   docs cannot drift apart.

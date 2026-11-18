@@ -127,7 +127,22 @@ check "names the naming rule" "$(printf '%s' "$OUT" | grep -q 'must be <version>
 rm -f "$SERVER/db/migrations/bogus.sql"
 
 echo
-echo "=== 6. status reports both halves"
+echo
+echo "=== 6. an applied migration may move to db/archive/ without reading as missing"
+synthetic 9.9.5-archive-me.sql \
+  "ALTER TABLE mig_probe ADD COLUMN archived_probe TEXT;"
+init >/dev/null
+check "applied from db/migrations/" \
+  "$([ "$(q "SELECT count(*) FROM schema_migrations WHERE filename='9.9.5-archive-me.sql'")" = 1 ] && echo 0 || echo 1)"
+mv "$SERVER/db/migrations/9.9.5-archive-me.sql" "$SERVER/db/archive/9.9.5-archive-me.sql"
+OUT="$(init --status)"
+check "moving it to the archive does not report it missing" \
+  "$(printf '%s' "$OUT" | grep -q 'no longer in db/migrations' && echo 1 || echo 0)"
+check "and it is still not re-applied from there" \
+  "$([ "$(q "SELECT count(*) FROM schema_migrations WHERE filename='9.9.5-archive-me.sql'")" = 1 ] && echo 0 || echo 1)"
+rm -f "$SERVER/db/archive/9.9.5-archive-me.sql"
+
+echo "=== 7. status reports both halves"
 STATUS="$(init --status)"
 check "lists what is applied" "$(printf '%s' "$STATUS" | grep -q 'Applied (' && echo 0 || echo 1)"
 check "and what is pending" "$(printf '%s' "$STATUS" | grep -q 'Pending (0)' && echo 0 || echo 1)"

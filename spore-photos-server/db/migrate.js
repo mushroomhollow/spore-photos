@@ -33,6 +33,7 @@ const crypto = require('crypto');
 const semver = require('../lib/semver');
 
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
+const ARCHIVE_DIR = path.join(__dirname, 'archive');
 const SCHEMA_FILE = path.join(__dirname, 'schema.sql');
 
 /**
@@ -155,6 +156,23 @@ async function listAvailable() {
   return orderMigrations(entries);
 }
 
+/**
+ * Versioned migrations kept in db/archive/ — already applied everywhere, kept as
+ * the record of what ran. Never applied, never replayed; used only to answer
+ * "is this file still accounted for?".
+ */
+async function listArchived() {
+  let entries = [];
+  try {
+    entries = await fs.readdir(ARCHIVE_DIR);
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
+
+  return entries.filter((f) => MIGRATION_RE.test(f)).map((f) => parseMigration(f));
+}
+
 async function appliedRows(pool) {
   const { rows } = await pool.query(
     'SELECT filename, version, checksum, applied_at FROM schema_migrations ORDER BY applied_at, filename',
@@ -190,11 +208,17 @@ async function changedAfterApply(pool) {
   return changed;
 }
 
-/** Recorded migrations whose file is gone from db/migrations/. */
+/** Recorded migrations whose file is gone from db/migrations/ or db/archive/. */
 async function missingFiles(pool) {
   const applied = (await appliedRows(pool)).filter((r) => !r.filename.startsWith('archive/'));
-  const available = new Set((await listAvailable()).map((m) => m.filename));
-  return applied.filter((r) => !available.has(r.filename)).map((r) => r.filename);
+  const here = new Set((await listAvailable()).map((m) => m.filename));
+  // A migration that has already run is allowed to live in db/archive/ — that is
+  // where an applied migration goes once a later release ships its own, and the
+  // file being moved must not read as "your migration vanished". Checked by
+  // looking at the directory, not at the recorded name: the row is written when
+  // the file is applied, long before anyone moves it.
+  const archived = new Set((await listArchived()).map((m) => m.filename));
+  return applied.filter((r) => !here.has(r.filename) && !archived.has(r.filename)).map((r) => r.filename);
 }
 
 /** What is applied, what is pending, and anything worth mentioning. */
@@ -263,6 +287,7 @@ module.exports = {
   migrate,
   status,
   listAvailable,
+  listArchived,
   parseMigration,
   orderMigrations,
   pendingMigrations,

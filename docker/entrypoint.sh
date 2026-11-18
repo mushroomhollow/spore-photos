@@ -78,8 +78,10 @@ wait_for_db() {
 wait_for_db
 
 # ── 3. Schema ─────────────────────────────────────────────────────────
-# db/init.js is idempotent (schema.sql + every migrate-*.sql). Only the API
-# runs it, so two containers starting together cannot race.
+# Only the API applies schema changes, so two containers starting together
+# cannot race. db/init.js runs schema.sql (idempotent) and then any migration
+# this release ships that has not been applied yet — each one once, recorded in
+# schema_migrations by db/migrate.js. Migrations are not replayed on restart.
 if [ "$ROLE" = "api" ] && [ "${SKIP_MIGRATE:-false}" != "true" ]; then
   log "applying schema and migrations"
   $RUNAS sh -c "cd $APPDIR && node db/init.js"
