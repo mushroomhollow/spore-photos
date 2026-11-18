@@ -1,0 +1,713 @@
+#!/usr/bin/env bash
+# ─── Spore-Photos: one-time setup ────────────────────────────────────────────
+#
+# Run this once, from a checkout of the repository, before anything exists:
+#
+#     ./setup
+#
+# It asks a handful of questions, works out how you are installing (a container
+# stack, or directly on this host), then does the whole installation for that
+# shape — including creating the database role and schema — and tells you
+# exactly which file to edit afterwards.
+#
+# It prompts for everything and takes no value flags on purpose: one script, one
+# path through it, nothing to memorise. Answers can be piped in on stdin, so a
+# script or an agent can drive it too.
+#
+# Nothing is overwritten without a prompt, and anything replaced is copied to
+# <file>.bak-<timestamp> first. Requires bash; nothing else beyond the packages
+# it checks for.
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$REPO_ROOT"
+
+# ─── Output helpers ──────────────────────────────────────────────────────────
+if [ -t 1 ]; then
+  B=$'\033[1m'; D=$'\033[2m'; R=$'\033[31m'; G=$'\033[32m'; O=$'\033[33m'; C=$'\033[36m'; N=$'\033[0m'
+else
+  B=''; D=''; R=''; G=''; O=''; C=''; N=''
+fi
+step() { printf '\n%s=== %s%s\n' "$B" "$*" "$N"; }
+info() { printf '  %s\n' "$*"; }
+dim()  { printf '  %s%s%s\n' "$D" "$*" "$N"; }
+good() { printf '  %s%s%s\n' "$G" "$*" "$N"; }
+warn() { printf '  %s! %s%s\n' "$O" "$*" "$N" >&2; }
+err()  { printf '  %sERROR: %s%s\n' "$R" "$*" "$N" >&2; }
+die()  { err "$*"; exit 1; }
+
+no_input() { # stdin ended mid-questionnaire
+  die "stdin ended at this question: $1
+  Answers are read in order, so piping them in (./setup < answers.txt) needs one
+  line per question with a blank line where you want the default. Running with no
+  input at all cannot work — this script asks before it writes anything.
+  Nothing has been written."
+}
+ask() { # ask <var> <prompt> [default]
+  local __var="$1" __prompt="$2" __default="${3-}" __answer=""
+  if [ -n "$__default" ]; then printf '  %s [%s]: ' "$__prompt" "$__default"
+  else printf '  %s: ' "$__prompt"; fi
+  IFS= read -r __answer || { printf '\n'; no_input "$__prompt"; }
+  [ -n "$__answer" ] || __answer="$__default"
+  printf -v "$__var" '%s' "$__answer"
+}
+ask_yes() { # ask_yes <prompt> [default y|n] -> 0 = yes
+  local __prompt="$1" __default="${2:-y}" __answer=""
+  while :; do
+    if [ "$__default" = y ]; then printf '  %s [Y/n]: ' "$__prompt"
+    else printf '  %s [y/N]: ' "$__prompt"; fi
+    IFS= read -r __answer || { printf '\n'; no_input "$__prompt"; }
+    __answer="${__answer:-$__default}"
+    case "$__answer" in
+      [Yy]*) return 0 ;;
+      [Nn]*) return 1 ;;
+      *) info "Please answer y or n." ;;
+    esac
+  done
+}
+confirm_secret() { # ask for a secret, twice, without echoing
+  local __var="$1" __prompt="$2" __a="" __b=""
+  while :; do
+    printf '  %s: ' "$__prompt"
+    IFS= read -r -s __a || { printf '\n'; no_input "$__prompt"; }
+    printf '\n'
+    printf '  repeat: '
+    IFS= read -r -s __b || { printf '\n'; no_input "$__prompt"; }
+    printf '\n'
+    if [ -z "$__a" ]; then info "That was empty — try again."; continue; fi
+    if [ "$__a" != "$__b" ]; then info "They did not match — try again."; continue; fi
+    printf -v "$__var" '%s' "$__a"
+    return 0
+  done
+}
+backup_if_exists() { # backup_if_exists <file> -> prints the backup path, or nothing
+  local f="$1"
+  [ -e "$f" ] || return 0
+  local b="$f.bak-$(date +%Y%m%d-%H%M%S)"
+  cp -p "$f" "$b"
+  printf '%s' "$b"
+}
+gen_password() {
+  # `head` closes the pipe early, which sends SIGPIPE to `tr` — under
+  # `set -o pipefail` that looks like a failure, so swallow it here.
+  local out=""
+  out="$( { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null || true; } | head -c 24 || true )"
+  printf '%s' "$out"
+}
+is_absolute() { case "$1" in /*) return 0 ;; *) return 1 ;; esac; }
+
+# Read one value out of an existing install, so a re-run can offer it as the
+# default instead of replacing it. Both return "" (and succeed) when there is
+# nothing to read — a missing file, an unparsable config or an absent key are
+# all just "no existing value".
+cfg_get() { # cfg_get <section> <key>
+  [ -f "$CONFIG_FILE" ] || return 0
+  node -e '
+    try {
+      const fs = require("fs");
+      const file = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const env = process.env.NODE_ENV || "development";
+      const active = { ...(file.default || {}), ...(file[env] || {}) };
+      const value = (active[process.argv[2]] || {})[process.argv[3]];
+      if (value !== undefined && value !== null) process.stdout.write(String(value));
+    } catch { /* unreadable config is treated as absent */ }
+  ' "$CONFIG_FILE" "$1" "$2" 2>/dev/null || true
+}
+env_get() { # env_get <file> <KEY>
+  [ -f "$1" ] || return 0
+  sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1 || true
+}
+port_busy() { # 0 = something is listening
+  local p="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnH "sport = :$p" 2>/dev/null | grep -q . && return 0 || return 1
+  fi
+  (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null && { exec 3<&- 2>/dev/null || true; return 0; } || return 1
+}
+port_problem() { # echo a message if the port is unusable, else nothing (always succeeds)
+  local p="$1"
+  case "$p" in ''|*[!0-9]*) echo "not a number"; return 0 ;; esac
+  if [ "$p" -lt 1 ] || [ "$p" -gt 65535 ]; then echo "out of range"; return 0; fi
+  if port_busy "$p"; then echo "already in use on this machine"; fi
+  return 0
+}
+
+# ─── Preconditions ───────────────────────────────────────────────────────────
+step "Spore-Photos setup"
+[ -f "$REPO_ROOT/VERSION" ] && [ -d "$REPO_ROOT/spore-photos-server" ] \
+  || die "run this from a checkout of the repository (VERSION and spore-photos-server/ must be next to this script)"
+VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
+info "repository  $REPO_ROOT"
+info "version     $VERSION"
+
+# Both possible configuration files are named here, before any question is
+# asked, because an existing one is read to offer its values as defaults.
+CONFIG_FILE="$REPO_ROOT/config/spore-photos.config.json"
+ENV_FILE="$REPO_ROOT/docker/.env"
+
+[ "$(id -u)" != "0" ] || die "run this as your normal user, not root — it uses sudo itself where root is needed.
+  Running the whole install as root leaves files that the service cannot maintain."
+
+if [ -f /.dockerenv ] || [ -f /run/.containerenv ]; then
+  warn "this looks like a container. Installing the server inside a container is not what this script is for:"
+  warn "copy the repository to the host and run ./setup there, or follow docs/DOCKER.md to deploy the stack."
+  ask_yes "Continue anyway?" n || exit 1
+fi
+
+# ─── What this machine is ────────────────────────────────────────────────────
+OS_ID=""; OS_LIKE=""; OS_PRETTY=""
+if [ -r /etc/os-release ]; then
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  OS_ID="${ID:-}"; OS_LIKE="${ID_LIKE:-}"; OS_PRETTY="${PRETTY_NAME:-$OS_ID}"
+fi
+case " $OS_ID $OS_LIKE " in
+  *" arch "*|*" archlinux "*) PKG=pacman; PKG_HINT="sudo pacman -S" ; PG_SERVICE=postgresql ;;
+  *" debian "*|*" ubuntu "*)   PKG=apt;    PKG_HINT="sudo apt install" ; PG_SERVICE=postgresql ;;
+  *" fedora "*|*" rhel "*)     PKG=dnf;    PKG_HINT="sudo dnf install" ; PG_SERVICE=postgresql ;;
+  *" suse "*|*" opensuse "*)   PKG=zypper; PKG_HINT="sudo zypper install" ; PG_SERVICE=postgresql ;;
+  *) PKG=""; PKG_HINT="install"; PG_SERVICE=postgresql ;;
+esac
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+  INIT=systemd
+else
+  INIT=other
+fi
+
+HAS_DOCKER=0
+DOCKER_UP=no
+if command -v docker >/dev/null 2>&1; then
+  HAS_DOCKER=1
+  if docker info >/dev/null 2>&1; then DOCKER_UP=yes; fi
+fi
+
+info "system      ${OS_PRETTY:-unknown} (package manager: ${PKG:-unknown})"
+info "init        $INIT"
+info "docker      $([ "$HAS_DOCKER" = 1 ] && echo "installed, daemon $DOCKER_UP" || echo 'not installed')"
+info "node        $(command -v node >/dev/null 2>&1 && node --version || echo 'not installed')"
+info "psql        $(command -v psql >/dev/null 2>&1 && psql --version | awk '{print $3}' || echo 'not installed')"
+info "ffmpeg      $(command -v ffmpeg >/dev/null 2>&1 && echo present || echo 'not installed (video uploads will fail)')"
+
+# ─── Is this already installed? ──────────────────────────────────────────────
+# Re-running ./setup is a supported way to upgrade or change settings, so what is
+# already configured is offered as the default answer to each question rather
+# than quietly replaced. The database password matters most: regenerating it
+# every time you re-run would rotate a credential you did not ask to rotate.
+EX_LIBRARY=""; EX_PORT=""; EX_DB_HOST=""; EX_DB_PORT=""; EX_DB_NAME=""; EX_DB_USER=""
+EX_DB_PASS=""; EX_PUID=""; EX_PGID=""
+if [ -f "$CONFIG_FILE" ]; then
+  EX_LIBRARY="$(cfg_get storage picturesRoot)"
+  EX_PORT="$(cfg_get server port)"
+  EX_DB_HOST="$(cfg_get database host)"
+  EX_DB_PORT="$(cfg_get database port)"
+  EX_DB_NAME="$(cfg_get database name)"
+  EX_DB_USER="$(cfg_get database user)"
+  EX_DB_PASS="$(cfg_get database password)"
+  info ""
+  info "existing    $CONFIG_FILE"
+  dim "Its values are the defaults below — press Enter to keep each one."
+elif [ -f "$ENV_FILE" ]; then
+  EX_LIBRARY="$(env_get "$ENV_FILE" LIBRARY_PATH)"
+  EX_PORT="$(env_get "$ENV_FILE" APP_PORT)"
+  EX_DB_NAME="$(env_get "$ENV_FILE" PG_DATABASE)"
+  EX_DB_USER="$(env_get "$ENV_FILE" PG_USER)"
+  EX_DB_PASS="$(env_get "$ENV_FILE" PG_PASSWORD)"
+  EX_PUID="$(env_get "$ENV_FILE" PUID)"
+  EX_PGID="$(env_get "$ENV_FILE" PGID)"
+  info ""
+  info "existing    $ENV_FILE"
+  dim "Its values are the defaults below — press Enter to keep each one."
+fi
+
+# ─── Which shape? ────────────────────────────────────────────────────────────
+step "How should this install run?"
+if [ "$DOCKER_UP" = yes ]; then
+  dim "Docker is available, so that is the suggested answer."
+  DEFAULT_MODE=1
+else
+  dim "Docker is not usable here, so a direct install is the suggested answer."
+  DEFAULT_MODE=2
+fi
+info "1) Containers — docker compose runs the API, the share service and PostgreSQL"
+info "2) Direct — this host runs the API and the share service; PostgreSQL is wherever you point it"
+ask MODE_CHOICE "Choose 1 or 2" "$DEFAULT_MODE"
+case "$MODE_CHOICE" in
+  1) MODE=docker ;;
+  2) MODE=host ;;
+  *) die "answer 1 or 2" ;;
+esac
+if [ "$MODE" = docker ] && [ "$DOCKER_UP" != yes ]; then
+  die "the Docker daemon is not reachable. Start it (for example: sudo systemctl start docker), or choose a direct install."
+fi
+info "mode        $MODE"
+
+# ─── Questions common to both ────────────────────────────────────────────────
+step "Where things live"
+if [ "$MODE" = docker ]; then
+  DEFAULT_LIBRARY="${EX_LIBRARY:-$REPO_ROOT/docker/library}"
+  dim "This is the directory on *this host* that will be mounted into the container as /data/photos."
+else
+  DEFAULT_LIBRARY="${EX_LIBRARY:-/srv/spore-photos/library}"
+  dim "The directory the service reads and writes. A mounted NAS share is fine, as long as it is mounted before the service starts."
+fi
+while :; do
+  ask LIBRARY "Photo library path" "$DEFAULT_LIBRARY"
+  is_absolute "$LIBRARY" || { info "Give an absolute path, e.g. /data/photos"; continue; }
+  break
+done
+
+ask PORT "Port for the web UI and API" "${EX_PORT:-4051}"
+PROBLEM="$(port_problem "$PORT")"
+if [ -n "$PROBLEM" ]; then
+  warn "port $PORT: $PROBLEM"
+  ask_yes "Use it anyway?" n || die "pick another port and run ./setup again"
+fi
+SHARE_PORT=$(( PORT + 1 ))
+
+step "Database"
+DB_HOST="${EX_DB_HOST:-127.0.0.1}"
+if [ "$MODE" = docker ]; then
+  DB_HOST=db
+  dim "Inside the compose network the app reaches PostgreSQL by its service name, so this is fixed at 'db'."
+else
+  dim "The app connects over TCP with a password, so use 127.0.0.1 rather than 'localhost' — a unix socket"
+  dim "often uses peer authentication, which the service cannot use."
+  ask DB_HOST "PostgreSQL host" "$DB_HOST"
+fi
+if [ "$MODE" = host ]; then
+  ask DB_PORT "PostgreSQL port" "${EX_DB_PORT:-5432}"
+else
+  DB_PORT=5432
+fi
+DB_PORT="${DB_PORT:-5432}"
+ask DB_NAME "Database name" "${EX_DB_NAME:-spore_photos}"
+ask DB_USER "Database user" "${EX_DB_USER:-spore}"
+
+if [ -n "$EX_DB_PASS" ]; then
+  info "Password for that database user:"
+  info "  k) keep the one already configured (recommended)"
+  info "  g) generate a new one"
+  info "  e) I will type my own"
+  ask PASS_CHOICE "Choose k, g or e" "k"
+else
+  info "Password for that database user:"
+  info "  g) generate a strong one for me (recommended)"
+  info "  e) I will type my own"
+  ask PASS_CHOICE "Choose g or e" "g"
+fi
+case "$PASS_CHOICE" in
+  [Kk]*)
+    DB_PASS="$EX_DB_PASS"
+    good "Keeping the existing password — a re-run should not rotate a credential you did not ask to change."
+    ;;
+  [Ee]*) confirm_secret DB_PASS "Database password" ;;
+  *)
+    DB_PASS="$(gen_password)"
+    good "Generated a 24-character password (it is written to the config file, never printed again)."
+    ;;
+esac
+case "$DB_PASS" in
+  *)
+    if printf '%s' "$DB_PASS" | grep -qE "['\" \$\\\\]"; then
+      warn "that password contains a quote, space, backslash or \$ — it works, but quote it carefully wherever you paste it."
+    fi
+    ;;
+esac
+
+step "Release updates (optional)"
+dim "Spore-Photos can tell you when a newer release exists, by reading a release.json that you publish."
+dim "Leave this empty to check nothing — it is easy to set later, and there is no default pointing at anybody else's repository."
+ask RELEASE_SOURCE "URL of your release.json" ""
+
+step "First-run admin account"
+dim "The server creates no account by itself. On first start it prints a one-time token that you enter in the browser to create the admin."
+dim "Leave empty to have it generated and logged at first start."
+ask SETUP_TOKEN_IN "Setup token" ""
+
+step "Behind a reverse proxy?"
+dim "Answer yes only if a proxy you control (nginx, Caddy, Cloudflare Tunnel) sets X-Forwarded-* headers."
+dim "Saying yes without a proxy lets clients forge their own IP address."
+if ask_yes "Will this run behind a reverse proxy?" n; then TRUST_PROXY=true; else TRUST_PROXY=false; fi
+
+# ─── Docker install ──────────────────────────────────────────────────────────
+if [ "$MODE" = docker ]; then
+  step "Container install"
+
+  PUID="${EX_PUID:-$(id -u)}"; PGID="${EX_PGID:-$(id -g)}"
+  ask PUID_IN "User id to run as (PUID)" "$PUID"; PUID="$PUID_IN"
+  ask PGID_IN "Group id to run as (PGID)" "$PGID"; PGID="$PGID_IN"
+
+  mkdir -p "$LIBRARY"
+  EXISTING="$(backup_if_exists "$ENV_FILE")"
+  if [ -n "$EXISTING" ]; then info "existing $ENV_FILE kept as $EXISTING"; fi
+
+  umask 077
+  {
+    cat <<EOF
+# Spore-Photos — container install.
+#
+# This is the ONLY configuration file for this install: docker compose reads it
+# both to fill in compose.yaml (\${LIBRARY_PATH}, \${APP_PORT}, \${PUID}, \${PGID})
+# and to set the environment inside the containers. config/spore-photos.config.json
+# is not used here — compose sets the values the app needs directly.
+#
+# Written by ./setup on $(date -u +%Y-%m-%d). Edit and re-run:
+#     docker compose up -d --build
+
+# ── Database ──────────────────────────────────────────────────────────────
+PG_PASSWORD=${DB_PASS}
+PG_DATABASE=${DB_NAME}
+PG_USER=${DB_USER}
+
+# ── Storage ───────────────────────────────────────────────────────────────
+# Host directory mounted as /data/photos inside the container.
+LIBRARY_PATH=${LIBRARY}
+
+# ── Networking ────────────────────────────────────────────────────────────
+APP_PORT=${PORT}
+TRUST_PROXY=${TRUST_PROXY}
+EOF
+    if [ -n "$RELEASE_SOURCE" ]; then printf 'UPDATE_SOURCE_URL=%s\n' "$RELEASE_SOURCE"; fi
+    if [ -n "$SETUP_TOKEN_IN" ]; then printf 'SETUP_TOKEN=%s\n' "$SETUP_TOKEN_IN"; fi
+    cat <<EOF
+
+# ── Runtime ───────────────────────────────────────────────────────────────
+PUID=${PUID}
+PGID=${PGID}
+CHOWN_RECURSIVE=false
+EOF
+  } > "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+  good "wrote $ENV_FILE (mode 600 — it holds the database password)"
+  info "library     $LIBRARY"
+
+  step "Building and starting the containers"
+  dim "This builds the image (a few minutes the first time) and starts PostgreSQL, the API and the share service."
+  if ask_yes "Start it now?" y; then
+    ( cd "$REPO_ROOT/docker" && docker compose up -d --build )
+    info "waiting for the API to answer…"
+    TRIES=0
+    until curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/api/health" 2>/dev/null; do
+      TRIES=$((TRIES + 1))
+      if [ "$TRIES" -ge 60 ]; then warn "the API did not answer after two minutes — check: docker compose logs api"; break; fi
+      sleep 2
+    done
+    if [ "$TRIES" -lt 60 ]; then good "the API is answering on port $PORT"; fi
+
+    TOKEN="$( (cd "$REPO_ROOT/docker" && docker compose logs api 2>/dev/null) | grep -io 'setup token[^A-Z0-9]*[A-Z0-9-]\{8,\}' | tail -1 | sed 's/.*[^A-Z0-9-]//' || true)"
+    if [ -n "$TOKEN" ]; then step "Setup token"; info "$TOKEN"; fi
+  else
+    dim "not started. When you are ready:  cd docker && docker compose up -d --build"
+  fi
+
+  step "Done"
+  info "Open        http://<this host>:${PORT}"
+  if [ -z "$SETUP_TOKEN_IN" ] && [ -z "${TOKEN:-}" ]; then
+    info "Setup token see:  cd docker && docker compose logs api | grep -i 'setup token'"
+  fi
+  info "Settings    edit docker/.env, then: cd docker && docker compose up -d"
+  info "Upgrading   git pull && cd docker && docker compose up -d --build"
+  info "New release?  Settings → Server → Version & Updates (see docs/INSTALL.md §4)"
+info "Android app settings → Download App (see docs/BUILD-APK.md)"
+  exit 0
+fi
+
+# ─── Direct install ──────────────────────────────────────────────────────────
+step "Checking what this install needs"
+
+MISSING=0
+if ! command -v node >/dev/null 2>&1; then
+  warn "node is not installed.  Try: $PKG_HINT ${PKG:+nodejs npm}${PKG:+ }"
+  MISSING=1
+else
+  NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+  NODE_MINOR="$(node -p 'process.versions.node.split(".")[1]')"
+  if [ "$NODE_MAJOR" -lt 20 ] || { [ "$NODE_MAJOR" -eq 20 ] && [ "$NODE_MINOR" -lt 19 ]; }; then
+    warn "node $(node --version) is too old — the client build needs 20.19 or newer."
+    MISSING=1
+  fi
+fi
+command -v npm  >/dev/null 2>&1 || { warn "npm is not installed.  Try: $PKG_HINT ${PKG:+nodejs npm}"; MISSING=1; }
+command -v psql >/dev/null 2>&1 || { warn "psql is not installed.  Try: $PKG_HINT ${PKG:+postgresql}${PKG:+ }"; MISSING=1; }
+if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+  warn "ffmpeg/ffprobe are missing — images will work, video uploads will fail.  Try: $PKG_HINT ${PKG:+ffmpeg}"
+fi
+[ "$MISSING" = 0 ] || die "install the missing packages above, then run ./setup again"
+good "node $(node --version), npm $(npm --version), psql present"
+
+# Service account
+step "Which user runs the service?"
+info "1) A dedicated system user (recommended — nothing runs as you or as root)"
+info "2) $(id -un) (the account you are using now)"
+ask USER_CHOICE "Choose 1 or 2" "1"
+RUN_USER="$(id -un)"
+if [ "$USER_CHOICE" = 1 ]; then
+  ask SERVICE_USER "System user name" "spore"
+  if id "$SERVICE_USER" >/dev/null 2>&1; then
+    info "$SERVICE_USER already exists"
+  else
+    info "creating $SERVICE_USER (needs sudo)"
+    sudo useradd --system --create-home --shell /usr/sbin/nologin "$SERVICE_USER" \
+      || die "could not create the user — create it yourself and re-run, or choose option 2"
+  fi
+  RUN_USER="$SERVICE_USER"
+fi
+info "service user  $RUN_USER"
+
+step "Creating the library and taking ownership"
+mkdir -p "$LIBRARY" 2>/dev/null || sudo mkdir -p "$LIBRARY"
+if [ "$RUN_USER" != "$(id -un)" ]; then
+  sudo chown -R "$RUN_USER:$RUN_USER" "$LIBRARY"
+fi
+if [ ! -w "$LIBRARY" ]; then
+  warn "$LIBRARY is not writable by $(id -un) — that is fine if only $RUN_USER needs to write it."
+fi
+good "library       $LIBRARY"
+
+# Database role + database
+step "Database"
+CREATE_DB=1
+if ! ask_yes "Create the role '$DB_USER' and database '$DB_NAME' now?" y; then CREATE_DB=0; fi
+
+SUPER_MODE=""
+if [ "$CREATE_DB" = 1 ]; then
+  if sudo -n -u postgres psql -tAc 'select 1' >/dev/null 2>&1; then
+    SUPER_MODE="sudo -u postgres"
+    info "using 'sudo -u postgres psql' (the local superuser, no password needed)"
+  elif ask_yes "Use sudo to reach the local postgres superuser? (you may be asked for your password)" y \
+       && sudo -v && sudo -u postgres psql -tAc 'select 1' >/dev/null 2>&1; then
+    SUPER_MODE="sudo -u postgres"
+    info "using 'sudo -u postgres psql'"
+  else
+    info "could not reach PostgreSQL as the local 'postgres' superuser."
+    if ask_yes "Enter superuser details so this script can create the role and database?" y; then
+      ask SUPER_USER "PostgreSQL superuser" "postgres"
+      ask SUPER_HOST "PostgreSQL host" "127.0.0.1"
+      confirm_secret SUPER_PASS "Password for $SUPER_USER"
+      SUPER_MODE="tcp"
+    else
+      CREATE_DB=0
+    fi
+  fi
+fi
+
+sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+run_super_sql() { # run_super_sql <sql>
+  if [ "$SUPER_MODE" = "sudo -u postgres" ]; then
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -q -c "$1"
+  else
+    PGPASSWORD="$SUPER_PASS" psql -h "$SUPER_HOST" -U "$SUPER_USER" -d postgres -v ON_ERROR_STOP=1 -q -c "$1"
+  fi
+}
+
+if [ "$CREATE_DB" = 1 ]; then
+  PW_SQL="$(sql_escape "$DB_PASS")"
+  if run_super_sql "DO \$\$ BEGIN
+      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$(sql_escape "$DB_USER")') THEN
+        CREATE ROLE $(sql_escape "$DB_USER") LOGIN PASSWORD '$PW_SQL';
+      ELSE
+        ALTER ROLE $(sql_escape "$DB_USER") PASSWORD '$PW_SQL';
+      END IF;
+    END \$\$;"; then
+    info "role '$DB_USER' ready"
+  else
+    warn "could not create the role — create it by hand, then re-run ./setup:"
+    warn "  CREATE ROLE $DB_USER LOGIN PASSWORD '<your password>';"
+  fi
+
+  EXISTS="$( (run_super_sql "SELECT 1 FROM pg_database WHERE datname = '$(sql_escape "$DB_NAME")'") 2>/dev/null || true )"
+  if printf '%s' "$EXISTS" | grep -q 1; then
+    info "database '$DB_NAME' already exists"
+  else
+    run_super_sql "CREATE DATABASE $(sql_escape "$DB_NAME") OWNER $(sql_escape "$DB_USER")" \
+      && info "created database '$DB_NAME'" \
+      || warn "could not create the database — create it by hand: CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+  fi
+else
+  dim "skipped — you will need an existing role and database. To create them yourself:"
+  dim "  CREATE ROLE $DB_USER LOGIN PASSWORD '<password>';"
+  dim "  CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+fi
+
+info "checking the connection the app will use…"
+if PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tAc 'select 1' >/dev/null 2>&1; then
+  good "connected to $DB_NAME as $DB_USER over TCP"
+else
+  warn "could not connect to $DB_NAME as $DB_USER at $DB_HOST:$DB_PORT."
+  warn "If PostgreSQL says 'peer authentication failed', add this to pg_hba.conf and reload:"
+  warn "  host all all 127.0.0.1/32 scram-sha-256"
+fi
+
+# Config file
+step "Writing the configuration file"
+EXISTING="$(backup_if_exists "$CONFIG_FILE")"
+if [ -n "$EXISTING" ]; then info "existing config kept as $EXISTING"; fi
+
+SP_VERSION="$VERSION" SP_PORT="$PORT" SP_SHARE="$SHARE_PORT" SP_TRUST="$TRUST_PROXY" \
+SP_DB_HOST="$DB_HOST" SP_DB_PORT="$DB_PORT" SP_DB_NAME="$DB_NAME" SP_DB_USER="$DB_USER" \
+SP_DB_PASS="$DB_PASS" SP_LIBRARY="$LIBRARY" SP_SETUP_TOKEN="$SETUP_TOKEN_IN" SP_RELEASE="$RELEASE_SOURCE" \
+SP_CONFIG_OUT="$CONFIG_FILE" node -e '
+  const fs = require("fs");
+  const e = process.env;
+  const config = {
+    _comment: "Written by ./setup. This is the only configuration file for this install; environment variables override any value here. See docs/INSTALL.md.",
+    default: {
+      server: { port: Number(e.SP_PORT), corsOrigin: "", trustProxy: e.SP_TRUST === "true" },
+      publicShare: { port: Number(e.SP_SHARE) },
+      database: {
+        host: e.SP_DB_HOST,
+        port: Number(e.SP_DB_PORT),
+        name: e.SP_DB_NAME,
+        user: e.SP_DB_USER,
+        password: e.SP_DB_PASS,
+      },
+      storage: { picturesRoot: e.SP_LIBRARY },
+      setup: { token: e.SP_SETUP_TOKEN },
+      update: { sourceUrl: e.SP_RELEASE },
+    },
+    production: {},
+    development: {},
+  };
+  fs.writeFileSync(e.SP_CONFIG_OUT, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+'
+chmod 600 "$CONFIG_FILE"
+good "wrote $CONFIG_FILE (mode 600 — it holds the database password)"
+info "release source  ${RELEASE_SOURCE:-not set (nothing is checked for updates)}"
+
+# Ownership of the checkout + dependencies
+step "Installing dependencies"
+if [ "$RUN_USER" != "$(id -un)" ]; then
+  info "handing the checkout to $RUN_USER"
+  sudo chown -R "$RUN_USER:$RUN_USER" "$REPO_ROOT"
+fi
+# Not a login shell: a profile that prints a banner or changes directory would
+# land in the middle of this output, and the PATH is set explicitly instead.
+# Node's own directory goes first — that is where npm lives, whether Node came
+# from a distribution package or from nvm/fnm.
+run_as_service() { # run_as_service <command>
+  local node_dir; node_dir="$(dirname "$(command -v node)")"
+  if [ "$RUN_USER" = "$(id -un)" ]; then
+    ( cd "$REPO_ROOT" && PATH="$node_dir:$PATH" bash -c "$1" )
+  else
+    sudo -u "$RUN_USER" -H env "PATH=$node_dir:/usr/local/bin:/usr/bin:/bin" \
+      bash -c "cd '$REPO_ROOT' && $1"
+  fi
+}
+info "npm ci (server)…";         run_as_service '(cd spore-photos-server       && npm ci --omit=dev)'
+info "npm ci (public share)…";   run_as_service '(cd spore-photos-public-share && npm ci --omit=dev)'
+info "npm ci + build (client)…"; run_as_service '(cd spore-photos-client       && npm ci && npm run build)'
+good "dependencies installed, web app built"
+
+step "Applying the database schema"
+run_as_service '(cd spore-photos-server && npm run db:init)'
+good "schema applied (no user account is created)"
+
+# Service
+step "Running it"
+NODE_BIN="$(command -v node)"
+SERVICE_INSTALLED=0
+if [ "$INIT" = systemd ]; then
+  if ask_yes "Install and start the systemd services now?" y; then
+    ENV_FILEPATH="/etc/spore-photos.env"
+    sudo tee "$ENV_FILEPATH" >/dev/null <<EOF
+# Environment for the Spore-Photos services.
+# Application settings live in ${CONFIG_FILE}; this file only says which mode to
+# run in. Keep it mode 600 — systemctl show would otherwise expose anything here.
+NODE_ENV=production
+EOF
+    sudo chmod 600 "$ENV_FILEPATH"
+
+    sudo tee /etc/systemd/system/spore-photos.service >/dev/null <<EOF
+[Unit]
+Description=Spore-Photos API
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=${RUN_USER}
+WorkingDirectory=${REPO_ROOT}/spore-photos-server
+EnvironmentFile=${ENV_FILEPATH}
+Environment=SPORE_PHOTOS_CONFIG=${CONFIG_FILE}
+ExecStart=${NODE_BIN} index.js
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo tee /etc/systemd/system/spore-photos-share.service >/dev/null <<EOF
+[Unit]
+Description=Spore-Photos public share
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=${RUN_USER}
+WorkingDirectory=${REPO_ROOT}/spore-photos-public-share
+EnvironmentFile=${ENV_FILEPATH}
+Environment=SPORE_PHOTOS_CONFIG=${CONFIG_FILE}
+Environment=PORT=${SHARE_PORT}
+ExecStart=${NODE_BIN} index.js
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now spore-photos spore-photos-share
+    info "waiting for the API to answer…"
+    TRIES=0
+    until curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/api/health" 2>/dev/null; do
+      TRIES=$((TRIES + 1))
+      if [ "$TRIES" -ge 30 ]; then
+        warn "the API did not answer — look at: journalctl -u spore-photos -n 50"
+        break
+      fi
+      sleep 2
+    done
+    if [ "$TRIES" -lt 30 ]; then good "the API is answering on port $PORT"; fi
+
+    TOKEN="$(journalctl -u spore-photos -n 200 2>/dev/null | grep -io 'setup token[^A-Z0-9]*[A-Z0-9-]\{8,\}' | tail -1 | sed 's/.*[^A-Z0-9-]//' || true)"
+    if [ -n "$TOKEN" ]; then step "Setup token"; info "$TOKEN"; fi
+    SERVICE_INSTALLED=1
+  else
+    dim "not installed. To run it yourself:"
+    dim "  cd $REPO_ROOT/spore-photos-server && NODE_ENV=production npm start"
+    dim "  cd $REPO_ROOT/spore-photos-public-share && NODE_ENV=production PORT=$SHARE_PORT npm start"
+  fi
+else
+  dim "No systemd here, so start the two services however this system does that"
+  dim "(OpenRC, runit, s6, a supervisor, or a terminal):"
+  dim "  cd $REPO_ROOT/spore-photos-server && NODE_ENV=production npm start"
+  dim "  cd $REPO_ROOT/spore-photos-public-share && NODE_ENV=production PORT=$SHARE_PORT npm start"
+  dim "Both need SPORE_PHOTOS_CONFIG=$CONFIG_FILE if the file is not the default."
+fi
+
+step "Done"
+info "Open        http://<this host>:${PORT}"
+if [ -z "$SETUP_TOKEN_IN" ] && [ -z "${TOKEN:-}" ]; then
+  if [ "$SERVICE_INSTALLED" = 1 ]; then
+    info "Setup token see the service log on first start:"
+    info "  journalctl -u spore-photos -n 50 | grep -i 'setup token'"
+  else
+    info "Setup token the service prints a one-time token on first start, for example:"
+    info "  cd $REPO_ROOT/spore-photos-server && NODE_ENV=production npm start"
+  fi
+fi
+info "Settings    edit $CONFIG_FILE, then restart the service"
+if [ "$RUN_USER" != "$(id -un)" ]; then
+  info "Upgrading   the checkout belongs to $RUN_USER: sudo -u $RUN_USER git -C $REPO_ROOT pull,"
+  info "            then repeat the dependency/build/db:init steps (docs/INSTALL.md §10)"
+else
+  info "Upgrading   git pull, then repeat the dependency/build/db:init steps (docs/INSTALL.md §10)"
+fi
+info "New release?  Settings → Server → Version & Updates (see docs/INSTALL.md §4)"
+info "Android app settings → Download App (see docs/BUILD-APK.md)"
+info "Behind a proxy? Set trustProxy in $CONFIG_FILE once you have one (docs/INSTALL.md §9)"
+exit 0

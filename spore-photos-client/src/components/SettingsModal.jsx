@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect } from 'react';
+import { Fragment, useState } from 'react';
 import {
   X, Lock, Users, Grid3X3, Download, Server, ChevronRight,
 } from 'lucide-react';
@@ -6,13 +6,12 @@ import ChangePasswordForm from './ChangePasswordForm';
 import PreferencesPanel from './PreferencesPanel';
 import ServerPanel from './ServerPanel';
 import UsersAndAccessPanel from './UsersAndAccessPanel';
-import MobilePermissionsPanel from './MobilePermissionsPanel';
+import DownloadAppPanel from './DownloadAppPanel';
 import { canConfigureServer } from '../backup/serverAddress';
 
-// Versioned APK filename. Rewritten by spore-photos-mobile/scripts/release-apk.sh.
-// A new name every release means a new URL, so Cloudflare can never serve a
-// stale cached APK.
-const APK_URL = '/apk/spore-photos-v1.9.apk';
+// Versioned APK filename: a new name every release means a new URL, so a CDN
+// (Cloudflare, in our case) can never serve a stale cached build. The panel
+// lists what this server actually hosts rather than guessing a filename.
 
 /**
  * Android-style settings: a single list of items at the root, and each item
@@ -20,10 +19,7 @@ const APK_URL = '/apk/spore-photos-v1.9.apk';
  * ("Settings › Preferences") across the top. Tapping any crumb jumps straight
  * back to that level. No left sidebar — content gets the full width.
  */
-export default function SettingsModal({ user, onClose }) {
-  // Stack of breadcrumb levels: [{ id, label }]. Empty = at the root list.
-  const [path, setPath] = useState([]);
-
+export default function SettingsModal({ user, onClose, initialSection = null }) {
   const canSetAddress = canConfigureServer();
   const items = [
     { id: 'preferences', label: 'Preferences', icon: Grid3X3, description: 'Photo grid size and appearance' },
@@ -46,6 +42,14 @@ export default function SettingsModal({ user, onClose }) {
     );
   }
 
+  // Stack of breadcrumb levels: [{ id, label }]. Empty = at the root list.
+  // A caller can ask to open straight into a section (the top-bar update badge
+  // does), which is the same as having walked there.
+  const [path, setPath] = useState(() => {
+    const item = items.find((i) => i.id === initialSection);
+    return item ? [{ id: item.id, label: item.label }] : [];
+  });
+
   const current = path.length ? path[path.length - 1] : null;
   const openItem = (item) => setPath((p) => [...p, { id: item.id, label: item.label }]);
   // Jump back to a breadcrumb level: -1 = root, otherwise the path index.
@@ -60,7 +64,7 @@ export default function SettingsModal({ user, onClose }) {
       case 'server': return <ServerPanel user={user} />;
       case 'change-password': return <ChangePasswordForm />;
       case 'users-access': return <UsersAndAccessPanel />;
-      case 'download-app': return <DownloadAppSection />;
+      case 'download-app': return <DownloadAppPanel user={user} />;
       default: return null;
     }
   };
@@ -129,59 +133,6 @@ export default function SettingsModal({ user, onClose }) {
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function DownloadAppSection() {
-  // The APK is not in the repository (Android build output). A container image
-  // built from source usually has none, so probe before offering a dead link.
-  const [apkReady, setApkReady] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(APK_URL, { method: 'HEAD' })
-      .then(r => { if (!cancelled) setApkReady(r.ok); })
-      .catch(() => { if (!cancelled) setApkReady(false); });
-    return () => { cancelled = true; };
-  }, []);
-
-  return (
-    <div className="p-6 space-y-4">
-      <h4 className="text-lg font-bold text-retro-navy flex items-center gap-2">
-        <Download size={20} className="text-retro-teal" />
-        Download the Android App
-      </h4>
-      <p className="text-retro-navy/70 text-sm">
-        Install the Spore-Photos APK on your Android phone for native DCIM backup
-        and background sync.
-      </p>
-
-      {apkReady === false ? (
-        <p className="text-retro-navy/60 text-sm bg-retro-cream/60 border border-retro-mint/40 rounded-xl px-4 py-3">
-          No APK has been published on this server. Drop the built
-          <code className="mx-1 font-mono text-xs">spore-photos-v*.apk</code>
-          into <code className="mx-1 font-mono text-xs">spore-photos-client/public/apk/</code>
-          and rebuild the web app to make it available here.
-        </p>
-      ) : (
-        <a
-          href={APK_URL}
-          download
-          className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-retro-teal text-white font-semibold text-sm hover:bg-retro-teal/80 transition-colors"
-        >
-          <Download size={18} />
-          Download APK
-        </a>
-      )}
-
-      <p className="text-retro-navy/50 text-xs">
-        Before installing, enable "Install from unknown apps" in your Android
-        Settings. You may need to use a file manager to open the downloaded APK.
-      </p>
-
-      {/* Native-only: permission status + deep links (renders nothing on web) */}
-      <MobilePermissionsPanel />
     </div>
   );
 }

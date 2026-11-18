@@ -127,9 +127,37 @@ built SPA; `docker/compose.yaml` runs it twice (`api`, `share`) beside Postgres.
 - The app runs as `PUID:PGID` (default 1000:1000) after the entrypoint fixes
   ownership of the photo volume; it drops from root with `gosu`.
 - `db/init.js` must stay idempotent — it runs on every container start.
-- APKs are not in the repo; the Download App panel probes for one and explains
-  itself when absent. Drop a `spore-photos-v*.apk` into
-  `spore-photos-client/public/apk/` before building to ship one.
+- APKs are not in the repo and the project publishes no binary: each server
+  owner builds and signs their own, with their own key, via
+  `spore-photos-mobile/scripts/build-apk.sh` (see `docs/BUILD-APK.md`). The
+  Download App panel explains this when no APK is present. Never commit an APK
+  or a keystore, and always keep the version number in the APK filename — a
+  stable filename is a URL a CDN will serve from cache after a release.
+
+### Versions and updates
+
+- `VERSION` at the repo root is the only version source. `release.json` describes
+  a release to *other* installs; neither may invent a number. The Android shell
+  derives `versionName`/`versionCode` from `VERSION`.
+- `./setup` is the user-facing installer and the only path a user is asked to
+  follow. It writes one configuration file per install shape — `docker/.env` for
+  containers, `config/spore-photos.config.json` for a direct install — and tells
+  the user which. Keep `docs/INSTALL.md` and `docs/DOCKER.md` in step with it,
+  and never leave the docs pointing at the other shape's file.
+- The update check is **on demand only** — it runs when Settings → Server is
+  opened, plus an explicit "Check again". Never add a boot check, a timer or a
+  background poll: an install must not talk to the internet because it started.
+- The checker never throws and never guesses. Unusable input is reported as
+  unusable (`not_published`, `unreadable`, `network`, …), and a version that is
+  equal or older than the installed one is *silence*, so a fork running ahead of
+  upstream is never nagged.
+- The cache belongs to one source URL; changing the source must not serve the
+  previous source's answer.
+- `lib/updateSource.js` is the only place that may attach an `Authorization`
+  header, and only to GitHub hosts — a token must never follow an
+  operator-supplied URL.
+- Any new fetch path needs a test in `spore-photos-server/test/`. `npm test`
+  runs the suite; there is no build step for the server.
 
 See [`docs/DOCKER.md`](docs/DOCKER.md) for the user-facing guide.
 
@@ -182,3 +210,36 @@ Build the Android app with `npx cap sync android` then
   `retro-orange`, `retro-red`).
 - Prefer small, single-purpose route/service modules; `index.js` only wires
   middleware and routers.
+
+## Database migrations are versioned per release
+
+`db/schema.sql` is the schema a **new** install gets, and runs on every start
+(guarded throughout). Everything else lives in `db/migrations/` as
+`<version>-<slug>.sql`, one file per release, applied **once** and recorded in
+`schema_migrations`.
+
+- Never re-introduce a "run every migrate-*.sql on every start" loop. Replaying a
+  release that dropped or replaced something corrupts data that arrived later —
+  `spore-photos-server/test/migrations.sh` demonstrates the loss.
+- Add the table/column to `schema.sql` **and** the migration in the same commit:
+  the two paths must land on the same shape.
+- A migration does not have to be re-runnable. It must be a single forward step.
+- `npm run db:status` shows applied vs pending. `npm run db:init` applies.
+- Nothing applies migrations at server boot — `./setup`, the container entrypoint
+  and `npm run db:init` do. Do not tell users to restart a service to migrate.
+
+## Release notes are files, and release.json is generated
+
+- `releases/<version>.md` is written **as part of preparing a release**: front
+  matter carries `version`, `released`, `upgrade:{breaking,minFrom,migrations,backupFirst}`
+  and `android:{version,rebuild}`; the sections are "What changed", "What this
+  means for your install" (this text becomes `notes` in release.json, and is what
+  the Version & Updates panel shows) and "Action required".
+- `node scripts/build-release-json.js` generates `release.json` from it. Never
+  hand-edit `release.json`.
+- `node scripts/check-release.js` is the gate: it refuses a release with no notes,
+  a migration that does not declare `upgrade.migrations`, a declared migration
+  with no file, a breaking release with no `minFrom` or an empty "Action
+  required", more than one migration for one release, or a `release.json` that has
+  drifted from its notes.
+- `scripts/release.sh` (in the parent directory, not the repo) runs both.

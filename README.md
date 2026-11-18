@@ -58,6 +58,8 @@ Three containers — API + web UI, public share, PostgreSQL — and one publishe
 port. No host packages beyond Docker:
 
 ```bash
+./setup                   # from this checkout; choose "Containers"
+# or by hand:
 cd docker
 cp .env.example .env      # set PG_PASSWORD
 docker compose up -d --build
@@ -182,16 +184,55 @@ moved. Trees written by older versions (`<username>/<YYYYMM>/…`) are still rea
 ## Version numbers
 
 `VERSION` at the repo root is the single source of truth. The services report it
-at `GET /api/health`, the web bundle bakes it in, and the UI shows a warning
-banner when the server and the bundle disagree — a partial upgrade is visible
-instead of silently breaking.
+at `GET /api/health`, the web bundle bakes it in, the Android app derives its
+`versionName` and `versionCode` from it, and the UI shows a warning banner when
+the server and the bundle disagree — a partial upgrade is visible instead of
+silently breaking.
+
+Each release is described by `release.json`, published next to the source. Set
+the address of one on the server — `update.sourceUrl` in the config file, or
+`UPDATE_SOURCE_URL` in the environment — and the Version & Updates panel reports
+when a newer version exists and how *that* install upgrades (Docker compose, or a
+manual checkout), with the steps ready to copy. The panel itself is read-only: it
+states which address is in use, or that none is, and names the config file.
+
+**Nothing is checked until a source is set.** There is no built-in URL: an
+install with no configured source says so and fetches nothing, because choosing
+a repository on someone's behalf would mean their server quietly phoning a host
+they never picked. When a source is configured, the check runs only as that
+panel is opened — nothing polls, nothing phones home on boot, and a fork running
+ahead of what the source advertises sees nothing.
+
+`release.json` shape:
+
+```json
+{
+  "version": "2.0.0",
+  "released": "2027-01-15",
+  "url": "https://…/releases/tag/v2.0.0",
+  "notes": "One line about the release.",
+  "upgrade": { "breaking": true, "minFrom": "1.9.0", "migrations": true, "backupFirst": true },
+  "android": { "version": "2.0.0", "rebuild": true }
+}
+```
+
+Only `version` is required; everything else improves what the panel can say. The
+`upgrade` block is what a self-hoster needs *before* upgrading, and `android.rebuild`
+is set when a release changed the Android shell (the app itself tells you to
+rebuild the APK only then — the UI always comes from your server).
 
 ## Android app
 
 The app asks for your server's address on first launch (it is not hard-coded to
 any domain), so it can talk to a LAN address, a Tailscale IP, or a public
-hostname. See [`spore-photos-mobile/AGENTS.md`](spore-photos-mobile/AGENTS.md)
-for build instructions.
+hostname. It loads the whole UI from that server, so a server upgrade reaches
+your phone without touching the app at all.
+
+**There is no published app binary.** Build and sign your own APK with
+`spore-photos-mobile/scripts/build-apk.sh` — see
+[`docs/BUILD-APK.md`](docs/BUILD-APK.md). The key you create is the only one that
+can ever update the app you install, which is exactly why it belongs to you and
+not to whoever runs the repository.
 
 ## Notes on exposure
 

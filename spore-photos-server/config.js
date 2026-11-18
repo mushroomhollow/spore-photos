@@ -27,6 +27,10 @@ const config = {
   // proxy you control sets them. When false the socket address is used, so a
   // client cannot forge its IP (or forge HTTPS).
   trustProxy: String(pick('TRUST_PROXY', 'server', 'trustProxy', false)) === 'true',
+  // What this server calls itself in the UI. Empty means "use the hostname the
+  // browser is on" — the right default for a fork, because one operator's domain
+  // does not belong in the code everyone else ships.
+  siteName: pick('SITE_NAME', 'server', 'siteName', ''),
 
   // Database connection. No credentials are baked in — a deployment supplies
   // them via env or the config file, otherwise the server refuses to start.
@@ -52,6 +56,16 @@ const config = {
   // One-time token required to create the first admin account. When unset, the
   // server generates one on first boot and prints it to the log.
   setupToken: pick('SETUP_TOKEN', 'setup', 'token', ''),
+
+  // ── Updates ────────────────────────────────────────────────
+  // The URL of the release.json this install compares itself against — the raw
+  // view of a file on a code host, or any web server that serves one.
+  //
+  // There is no default and no web UI for this: it is set here (or with
+  // UPDATE_SOURCE_URL). Empty means this install checks nothing, and the
+  // Version & Updates footnote says so. Nothing polls: the check runs when that
+  // panel opens, or when someone presses "Check again".
+  updateSourceUrl: pick('UPDATE_SOURCE_URL', 'update', 'sourceUrl', ''),
 };
 
 module.exports = config;

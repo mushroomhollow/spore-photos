@@ -364,4 +364,39 @@ export async function scanLibrary() {
   return data;
 }
 
+// ─── Version / update check ──────────────────────────────────
+// On demand, never on a timer: called when Settings → Server opens, and by the
+// explicit "Check again" button. The server caches for 5 minutes and refuses
+// forced checks inside a 60s floor, so this is cheap to call. With no release
+// source configured, the server makes no request at all.
+export async function fetchVersionStatus({ force = false } = {}) {
+  const { data } = await api.get('/version/status', { params: force ? { force: 1 } : undefined });
+  return data;
+}
+
+// ─── Android app build ───────────────────────────────────────
+// The project ships no APK: each server owner builds their own, in this UI or
+// on the command line. These calls drive the same script the CLI uses.
+export async function fetchApkStatus() {
+  const { data } = await api.get('/apk/status');
+  return data;
+}
+
+// Admin-only, once. Returns the new key's SHA-256 fingerprint.
+export async function createApkKeystore(passphrase) {
+  const { data } = await api.post('/apk/keystore', { passphrase });
+  return data;
+}
+
+// Admin-only. Starts a build and returns immediately; poll fetchApkBuildStatus.
+export async function startApkBuild({ version, passphrase } = {}) {
+  const { data } = await api.post('/apk/build', { version, passphrase });
+  return data;
+}
+
+export async function fetchApkBuildStatus() {
+  const { data } = await api.get('/apk/build/status');
+  return data;
+}
+
 export default api;

@@ -22,6 +22,9 @@
     },
     "setup": {
       "token": ""
+    },
+    "update": {
+      "sourceUrl": ""
     }
   },
 

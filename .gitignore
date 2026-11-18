@@ -39,6 +39,16 @@ spore-photos-mobile/android/.gradle/
 spore-photos-mobile/android/local.properties
 spore-photos-client/public/apk/
 
+# The Android signing key belongs to whoever builds the app — never the repo.
+# Keep it out of git and out of a shared checkout; losing it means existing
+# installs can never be updated again (Android refuses a differing signature).
+*.jks
+*.keystore
+keystore.properties
+
+# Web assets copied into the Android project by `cap sync` for an APK build
+spore-photos-mobile/android/app/src/main/assets/public/
+
 # Python
 *.pyc
 __pycache__/

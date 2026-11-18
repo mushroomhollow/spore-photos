@@ -5,10 +5,39 @@ written so an automated agent or a person can follow it top to bottom. Section 1
 lists everything that has to be installed before you start.
 
 > **Prefer containers?** Stop here and use [`DOCKER.md`](DOCKER.md) instead —
-> one `docker compose up` replaces sections 1–9 below.
+> one `docker compose up` replaces most of the steps below.
 
 Paths below use `/opt/spore-photos` for the checkout and `/srv/spore-photos/library`
 for the photo library. Substitute your own.
+
+---
+
+## 0. Quick path
+
+From a checkout of the repository:
+
+```bash
+./setup
+```
+
+It asks a handful of questions — where your photos live, which port, your
+database details, whether you are behind a proxy, and an optional release URL —
+then does the whole install for the shape it detects (containers, or this host
+directly): creating the database role and schema, installing dependencies,
+building the web app, and starting the service. Anything needing root is
+confirmed with you first, and the last question is whether to install the
+systemd services now.
+
+It writes **exactly one** configuration file for your install, and says which:
+
+| Install shape | The file you edit afterwards |
+|---|---|
+| Containers | `docker/.env` (compose reads it, and passes it into the containers) |
+| Direct on this host | `config/spore-photos.config.json` |
+
+Everything below is that same install performed by hand. Read on if you want to
+see every step, are installing somewhere unusual, or prefer to do it yourself —
+the two paths produce the same result.
 
 ---
 
@@ -154,20 +183,57 @@ One file configures every service.
 cp config/spore-photos.config.example.json config/spore-photos.config.json
 ```
 
+(`./setup` in §0 writes this file for you, with mode `600`, because it holds the
+database password. This section is the by-hand version.)
+
 Edit it:
 
 ```json
 {
   "default": {
-    "server":      { "port": 4051, "corsOrigin": "", "trustProxy": false },
+    "server":      { "port": 4051, "corsOrigin": "", "trustProxy": false, "siteName": "" },
     "publicShare": { "port": 4052 },
     "database":    { "host": "localhost", "port": 5432, "name": "spore_photos",
                      "user": "spore", "password": "the-password-from-step-2" },
     "storage":     { "picturesRoot": "/srv/spore-photos/library" },
-    "setup":       { "token": "" }
+    "setup":       { "token": "" },
+    "update":      { "sourceUrl": "" }
   }
 }
 ```
+
+### Naming this server
+
+`server.siteName` (or `SITE_NAME` in the environment) is what the app calls this
+server in the UI — the top bar shows the name, the version it is running, and an
+*update available* notice when one exists. Leave it empty and the hostname the
+browser is on is used, which is the right default: whoever runs the install names
+it, and no deployment's domain is baked into the code.
+
+### Knowing when a release exists
+
+`update.sourceUrl` is the address of the `release.json` published by **whoever you
+follow** — the project you forked or a server you trust:
+
+```json
+"update": { "sourceUrl": "https://raw.githubusercontent.com/<owner>/<repo>/main/release.json" }
+```
+
+`release.json` sits at the root of that repository (`releases/<version>.md` is its
+human-readable source; `scripts/build-release-json.js` generates it), so any host
+that can serve a file will do — a raw URL, your own web server, anything with
+`http(s)://`. Every install ships with `VERSION`, so an install that publishes its
+own release.json lets others follow *you*.
+
+Leave it empty and the install checks nothing — there is deliberately no default
+pointing at somebody else's repository.
+
+Once set, open **Settings → Server → Version & Updates**. It is on demand: the
+check runs when the panel opens or when you press *Check again*, and nothing polls
+in the background. When a newer release exists the panel shows what changed, any
+warnings that apply to your install shape, and the exact commands to upgrade —
+also available before an update exists, under *How this install upgrades*. See
+§10 for applying one.
 
 Every value can be overridden by an environment variable (see `.env.example`);
 that is often more convenient with systemd or containers. `SPORE_PHOTOS_CONFIG`
@@ -333,6 +399,17 @@ video needs roughly 500 MB of free RAM for the duration of that upload.
 
 ## 10. Upgrading
 
+Re-running `./setup` from the checkout is the supported path: it notices your
+existing configuration and offers those values as the defaults, so keeping them
+is a matter of pressing Enter — including the database password, which it will
+not rotate unless you ask it to.
+
+The server can also tell you when a release exists: **Settings → Server →
+Version & Updates** compares this install against the release file you configure
+with `update.sourceUrl` (see §4) and prints the steps for this install shape.
+
+By hand, with a dedicated service user:
+
 ```bash
 sudo -u spore bash
 cd /opt/spore-photos
@@ -340,11 +417,22 @@ git pull
 (cd spore-photos-server       && npm ci --omit=dev)
 (cd spore-photos-public-share && npm ci --omit=dev)
 (cd spore-photos-client       && npm ci && npm run build)
-(cd spore-photos-server       && npm run db:init)   # applies new migrations
+(cd spore-photos-server       && npm run db:init)   # applies this release's migration, once
 exit
 sudo systemctl restart spore-photos spore-photos-share
 curl -s localhost:4051/api/health                   # confirm the new version
 ```
+
+> Migrations are applied by `npm run db:init` — **not** by restarting the service.
+> Each one belongs to the release that shipped it, runs once, and is recorded in
+> `schema_migrations`; `npm run db:status` lists what is applied and what is
+> outstanding. `db:init` exits non-zero if a migration fails, and the schema is
+> not left half-applied to a running server.
+
+> With a dedicated service user the **checkout belongs to that user**, so
+> `git pull` and the `npm` steps have to run as it (`sudo -u spore …`), not as
+> you. The service only needs read access at runtime; it is the upgrade that
+> writes.
 
 `VERSION` is the release version for everything. If you upgrade the server but
 not the built client (or vice versa), the UI shows a version-mismatch banner

@@ -1,6 +1,6 @@
 {
   "name": "spore-photos-server",
-  "version": "1.9.0",
+  "version": "2.0.0",
   "description": "Self-hosted photo library API — auth, photo ingest, albums, sharing",
   "license": "Unlicense",
   "engines": {
@@ -10,7 +10,9 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "db:init": "node db/init.js"
+    "db:init": "node db/init.js",
+    "db:status": "node db/init.js --status",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "archiver": "^8.0.0",

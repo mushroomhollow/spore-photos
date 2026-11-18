@@ -83,6 +83,29 @@ CREATE TABLE IF NOT EXISTS devices (
     update_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- An authorised client is identified by a server-issued token, not by a
+-- client-generated device id or by its IP address. Guarded so an install that
+-- predates this gains the columns here, exactly as the migration of the same
+-- name did (db/archive/migrate-20261112-client-tokens.sql).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'devices' AND column_name = 'client_token_hash'
+    ) THEN
+        ALTER TABLE devices ADD COLUMN client_token_hash TEXT;
+        ALTER TABLE devices ADD COLUMN authorized BOOLEAN NOT NULL DEFAULT false;
+        ALTER TABLE devices ADD COLUMN authorized_at TIMESTAMPTZ;
+
+        -- Existing devices were already vouched for by an access code or a
+        -- password login. They may use the password form once, which issues
+        -- their token.
+        UPDATE devices SET authorized = true, authorized_at = NOW();
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_devices_client_token_hash ON devices (client_token_hash);
+
 -- Sessions (links IP, device, and user together)
 CREATE TABLE IF NOT EXISTS sessions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

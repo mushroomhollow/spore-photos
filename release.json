@@ -1,0 +1,16 @@
+{
+  "_comment": "Describes this release to other installs. Read by the Version & Updates panel when an operator points their server at a URL serving this file. Generated from releases/<version>.md by scripts/build-release-json.js — edit the notes file, not this one.",
+  "version": "2.0.0",
+  "released": "2026-11-18",
+  "notes": "This release is mostly about how you run it, not what it stores: the database schema is unchanged, and no migration ships with it. Upgrade the code, apply the schema (which is a no-op here), and restart. Take a backup first anyway. Reinstalling the Android app is required: the app you may have been running was signed with a key this project no longer ships, and the download it pointed at has gone. Build your own and your key updates it from then on.",
+  "upgrade": {
+    "breaking": true,
+    "migrations": false,
+    "backupFirst": true,
+    "minFrom": "1.9.0"
+  },
+  "android": {
+    "version": "2.0.0",
+    "rebuild": true
+  }
+}

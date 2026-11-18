@@ -6,7 +6,9 @@ import {
 import { logout, fetchStats } from '../api/client';
 import * as localStore from '../backup/localStore';
 import AutoBackupSetting from './AutoBackupSetting';
-import SettingsModal from './SettingsModal';
+import SettingsModal from './SettingsModal'
+import ServerVersionBadge from './ServerVersionBadge'
+import { canConfigureServer } from '../backup/serverAddress';
 import UploadZone from './UploadZone';
 import LibraryTools from './LibraryTools';
 import PhotoGallery from './PhotoGallery';
@@ -23,6 +25,9 @@ const navItems = [
 export default function Dashboard({ user, onLogout }) {
   const [activePage, setActivePage] = useState('dashboard');
   const [showSettings, setShowSettings] = useState(false);
+  // Set when something else asks to open a specific settings screen (the
+  // top-bar version badge jumps to Server → Version & Updates).
+  const [settingsSection, setSettingsSection] = useState(null);
   const [galleryRefresh, setGalleryRefresh] = useState(0);
   const [stats, setStats] = useState(null);
 
@@ -255,6 +260,17 @@ export default function Dashboard({ user, onLogout }) {
               <LogOut size={14} />
               <span className="hidden sm:inline">Sign Out</span>
             </button>
+
+            {/* Which server this is and which release it runs, with a quiet
+                update signal. Non-admins cannot open the Server settings
+                screen, so for them the badge stays informational. */}
+            <ServerVersionBadge
+              onOpenUpdates={
+                canConfigureServer() || user?.role === 'admin'
+                  ? () => { setSettingsSection('server'); setShowSettings(true); }
+                  : null
+              }
+            />
           </div>
         </header>
 
@@ -302,7 +318,11 @@ export default function Dashboard({ user, onLogout }) {
 
       {/* Settings Modal */}
       {showSettings && (
-        <SettingsModal user={user} onClose={() => setShowSettings(false)} />
+        <SettingsModal
+          user={user}
+          initialSection={settingsSection}
+          onClose={() => { setShowSettings(false); setSettingsSection(null); }}
+        />
       )}
     </div>
   );

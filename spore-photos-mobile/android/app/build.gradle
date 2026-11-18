@@ -7,8 +7,25 @@ android {
         applicationId "dev.mushroomhollow.photos"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10
-        versionName "1.9.0"
+
+        // The version comes from the repo's VERSION file, so the app, the APK
+        // filename and the release can never disagree. Overridable with
+        // -Pspore.versionName / -Pspore.versionCode, which is how
+        // scripts/build-apk.sh pins a build to a release.
+        //
+        // versionCode is major*10000 + minor*100 + patch (2.0.0 -> 20000),
+        // matching what scripts/build-apk.sh computes.
+        def sporeVersionFile = file("${rootProject.projectDir}/../../VERSION")
+        def sporeVersion = project.findProperty('spore.versionName')
+                ?: (sporeVersionFile.exists() ? sporeVersionFile.text.trim() : '0.0.0')
+        def sporeParts = sporeVersion.tokenize('.')
+        def sporeCode = project.findProperty('spore.versionCode')
+                ?: (sporeParts.size() >= 3
+                        ? (sporeParts[0].toInteger() * 10000 + sporeParts[1].toInteger() * 100 + sporeParts[2].toInteger())
+                        : 1)
+
+        versionCode sporeCode as Integer
+        versionName sporeVersion
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,10 +33,44 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+
+    // Release signing. The key belongs to whoever builds the app — it is never
+    // shipped with the source and never committed (see .gitignore). Values are
+    // read from, in order: -Pspore.* properties (scripts/build-apk.sh passes
+    // these), keystore.properties in this directory, then the environment
+    // (SPORE_KEYSTORE_PASS) so a passphrase does not have to appear in argv.
+    signingConfigs {
+        release {
+            def props = new Properties()
+            def propsFile = rootProject.file('keystore.properties')
+            if (propsFile.exists()) {
+                propsFile.withInputStream { props.load(it) }
+            }
+
+            def storeFilePath = project.findProperty('spore.storeFile') ?: props['storeFile']
+            if (storeFilePath) {
+                storeFile file(storeFilePath)
+                storePassword project.findProperty('spore.storePassword')
+                        ?: props['storePassword']
+                        ?: System.getenv('SPORE_KEYSTORE_PASS')
+                keyAlias project.findProperty('spore.keyAlias') ?: props['keyAlias'] ?: 'spore-photos'
+                keyPassword project.findProperty('spore.keyPassword')
+                        ?: props['keyPassword']
+                        ?: System.getenv('SPORE_KEYSTORE_PASS')
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // Only sign when a key was actually supplied. Without one, Gradle
+            // produces an unsigned APK, which build-apk.sh then refuses to
+            // publish — better a loud failure than a debug-signed release.
+            if (project.findProperty('spore.storeFile') || rootProject.file('keystore.properties').exists()) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }

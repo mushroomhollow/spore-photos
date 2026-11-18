@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Server, Save, RotateCcw, Info, Wifi } from 'lucide-react';
 import { canConfigureServer, getServerUrl, setServerUrl, restartApp, testServerUrl } from '../backup/serverAddress';
 import StoragePanel from './StoragePanel';
+import UpdatePanel from './UpdatePanel';
 
 function isNative() {
   return canConfigureServer();
@@ -209,6 +210,14 @@ export default function ServerPanel({ user }) {
           </div>
         </div>
       )}
+
+      {/* Version & update check. Shown to every signed-in user: it is
+          informational, it contains no machinery, and hiding it would mean only
+          admins ever learn an upgrade exists. The release source itself is an
+          operator setting in the config file, not something this panel writes. */}
+      <div className="border-t border-retro-mint/40 pt-6">
+        <UpdatePanel />
+      </div>
 
       {user?.role === 'admin' && (
         <div className="border-t border-retro-mint/40 pt-6">

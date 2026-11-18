@@ -4,6 +4,9 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.webkit.JavascriptInterface;
 
 import java.net.HttpURLConnection;
@@ -91,6 +94,36 @@ public class ServerBridge {
             return e.getClass().getSimpleName() + (message == null ? "" : ": " + message);
         } finally {
             if (conn != null) conn.disconnect();
+        }
+    }
+
+    /**
+     * The version of this installed APK, e.g. "2.0.0".
+     *
+     * Read from the package manager rather than from a constant, so it always
+     * describes the build that is actually on the device. The web UI needs it
+     * because it is served by the user's own server: without this the panel can
+     * report the server's version and the app's UI version, but nothing knows
+     * which *shell* is running, so it could never say "your app is older than
+     * the release you are being told about".
+     *
+     * Returns "" if the package manager has nothing to say, which the UI treats
+     * as "unknown" rather than "0".
+     */
+    @JavascriptInterface
+    public String getAppVersion() {
+        try {
+            String packageName = activity.getPackageName();
+            PackageInfo info;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                info = activity.getPackageManager()
+                        .getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0));
+            } else {
+                info = activity.getPackageManager().getPackageInfo(packageName, 0);
+            }
+            return info.versionName == null ? "" : info.versionName;
+        } catch (PackageManager.NameNotFoundException e) {
+            return "";
         }
     }
 

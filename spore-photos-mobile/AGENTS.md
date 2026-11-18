@@ -6,19 +6,34 @@ host.
 
 ## Build
 
-Prerequisites: JDK 21, Android SDK (platform-tools, build-tools, platforms),
-`ANDROID_HOME` exported.
+Build a signed release APK with `scripts/build-apk.sh` — it builds the web
+assets, syncs them in, signs with your key, verifies the signature, and places
+the result under a versioned name:
 
 ```bash
-cd spore-photos-client && npm run build     # web assets the shell will serve
-cd ../spore-photos-mobile
-npm install
-npx cap sync android
-cd android && ./gradlew assembleDebug
-# build/outputs/apk/debug/app-debug.apk
+./scripts/build-apk.sh --check            # is this machine ready? (exit 0 / 2 / 3)
+./scripts/build-apk.sh --init-keystore    # once: create your signing key
+./scripts/build-apk.sh build              # → client/public/apk/spore-photos-v<version>.apk
 ```
 
-`npx cap sync` must run after any change to the web build.
+Full prerequisites, the Docker alternative and a troubleshooting table keyed by
+real error strings: [`docs/BUILD-APK.md`](../docs/BUILD-APK.md).
+
+Do not hand-build with `./gradlew assembleDebug`: a debug-signed APK cannot
+update an install, and the script refuses to publish one. `npx cap sync` must run
+after any change to the web build — the script does that for you.
+
+## Version
+
+`versionName` and `versionCode` are derived from the repo's `VERSION` file
+(`android/app/build.gradle`), so the app, the APK filename and the release always
+agree. `versionCode` is `major*10000 + minor*100 + patch` (2.0.0 → 20000). A
+one-off build can override both with `-Pspore.versionName` / `-Pspore.versionCode`;
+`scripts/build-apk.sh` passes them.
+
+The APK filename must always carry the version. A stable name is a stable URL,
+and a CDN in front of the server will serve the previous build from cache after a
+release — which is exactly the bug this convention exists to prevent.
 
 ## Identity
 

@@ -21,6 +21,8 @@ const albumsRouter = require('./routes/albums');
 const statsRouter = require('./routes/stats');
 const shareRouter = require('./routes/share');
 const settingsRouter = require('./routes/settings');
+const versionRouter = require('./routes/version');
+const apkRouter = require('./routes/apk');
 const setupRouter = require('./routes/setup');
 const { applyStoredPhotosRoot } = require('./services/settings');
 const setup = require('./services/setup');
@@ -94,6 +96,8 @@ app.use('/api/photos', photosRouter);
 app.use('/api/albums', albumsRouter);
 app.use('/api/stats', statsRouter);
 app.use('/api/settings', settingsRouter);
+app.use('/api/version', versionRouter);
+app.use('/api/apk', apkRouter);
 app.use('/api', shareRouter);
 
 const SHARE_SERVER_PORT = process.env.SHARE_SERVER_PORT || '3052';

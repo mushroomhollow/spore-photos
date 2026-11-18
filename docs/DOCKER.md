@@ -11,6 +11,15 @@ alternatives, not steps in sequence.
 
 ## 1. Quick start
 
+The installer does this for you — from the repository root:
+
+```bash
+./setup
+```
+
+Choose **Containers** when it asks how this install should run. It writes
+`docker/.env` for you, then builds and starts the stack. The by-hand equivalent:
+
 ```bash
 cd docker
 cp .env.example .env      # set PG_PASSWORD at minimum
@@ -19,6 +28,11 @@ docker compose up -d --build
 
 That builds the image locally from this checkout, starts Postgres, applies the
 schema, and serves the app on **http://<host>:4051**.
+
+> **`docker/.env` is the only configuration file for a container install.** The
+> app's `config/spore-photos.config.json` is not used here — compose passes
+> everything the containers need. (The same settings live in that JSON for a
+> direct install, which is why `docs/INSTALL.md` shows that file instead.)
 
 Create the admin account:
 
@@ -162,8 +176,20 @@ cd docker
 docker compose up -d --build
 ```
 
-The `api` container applies any new `db/migrate-*.sql` on start (`db/init.js` is
-idempotent). Only the API runs migrations, so the two app containers cannot race.
+The `api` container applies the schema and any migration on start. Each migration
+belongs to the release that ships it (`spore-photos-server/db/migrations/<version>-<slug>.sql`),
+runs **once**, and is recorded in `schema_migrations` — so restarting the container
+never replays an older one. Only the API runs migrations, so the two app
+containers cannot race, and a failing migration stops the container instead of
+starting an application against a half-migrated database.
+
+See what an install still has to run:
+
+```bash
+docker compose exec api npm run db:status       # applied + pending
+docker compose exec api npm run db:init         # apply (or just: up -d, on start)
+```
+
 `VERSION` is baked into the image; if a stale client bundle is served alongside a
 newer server the UI shows a version-mismatch banner.
 
@@ -198,7 +224,7 @@ and copy the library back to `LIBRARY_PATH`.
 | Uploads fail, files never appear | `LIBRARY_PATH` not writable by `PUID:PGID` — set `CHOWN_RECURSIVE=true` once, or fix ownership on the host |
 | Everything looks like `172.x.x.x` in the admin view | Behind a proxy without `TRUST_PROXY=true` |
 | Login appears to work but the session drops | Serving over HTTPS through a proxy without `TRUST_PROXY=true` (cookie stays non-`Secure`) |
-| "Download App" says no APK | The APK is not in the repo; drop `spore-photos-v*.apk` into `spore-photos-client/public/apk/` and rebuild |
+| "Download App" says no APK | The project does not ship an app binary — each server owner builds their own. See [BUILD-APK.md](BUILD-APK.md) (`./scripts/build-apk.sh --check`, then `--init-keystore`, then `build`). The finished APK lands in `spore-photos-client/public/apk/` under its versioned name |
 | Large video rejected with `413` or "too large" | Cloudflare plan limit (100 MB Free/Pro) — upload over LAN/Tailscale; otherwise check `client_max_body_size` and `MAX_UPLOAD_MB` agree |
 | `docker compose build` fails on a missing buildx | Install the buildx plugin, or build with `DOCKER_BUILDKIT=0 docker build -f docker/Dockerfile -t spore-photos .` |
 

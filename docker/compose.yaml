@@ -73,5 +73,41 @@ services:
     # ports:
     #   - "${SHARE_PORT:-4052}:4052"
 
+  # ─── Android APK builder (opt-in) ──────────────────────────────────────────
+  # Building an APK needs a JDK and the Android SDK (~2.5 GB). This service
+  # carries them so the host needs nothing installed — but it is behind a
+  # profile, so `docker compose up` never pulls it and the app image stays
+  # Node-only.
+  #
+  #   docker compose --profile build run --rm builder --check
+  #   docker compose --profile build run --rm builder build
+  #
+  # The repository is bind-mounted, so your signing key (server/data/) and the
+  # finished APK (spore-photos-client/public/apk/) are the host's own files.
+  # It runs as PUID:PGID for the same reason: an APK owned by root is a small
+  # annoyance that is much easier to avoid than to clean up.
+  builder:
+    profiles: ["build"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.builder
+    image: spore-photos-builder:latest
+    working_dir: /repo
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      # Use an all-writable HOME so Gradle can cache inside the container.
+      HOME: /tmp
+      # Pass the keystore passphrase for this run, or type it at the prompt:
+      #   SPORE_KEYSTORE_PASS=… docker compose --profile build run --rm builder build
+      SPORE_KEYSTORE_PASS: ${SPORE_KEYSTORE_PASS:-}
+    volumes:
+      - ..:/repo
+      # Rebuilds are much faster with a persistent Gradle cache. Create the
+      # directory first so it is not created root-owned:
+      #   mkdir -p gradle-cache
+      # - ./gradle-cache:/tmp/.gradle
+    # Gradle is memory-hungry; uncomment to keep it from upsetting a small host.
+    # mem_limit: 4g
+
 volumes:
   pgdata:
