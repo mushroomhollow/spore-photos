@@ -1,16 +1,16 @@
 {
   "_comment": "Describes this release to other installs. Read by the Version & Updates panel when an operator points their server at a URL serving this file. Generated from releases/<version>.md by scripts/build-release-json.js — edit the notes file, not this one.",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "released": "2026-11-18",
-  "notes": "Upgrade as usual — this is a code-only release. There is no database migration and no Android rebuild: the app shell has not changed since v2.0.0, so the APK you built keeps working. If you installed a manual checkout and were told to check out a tag that did not exist, that is fixed here, and v2.0.0's tag has been published as well — either version is now reachable by tag. Two things worth knowing about a tag checkout: it leaves you on a detached HEAD, so the next upgrade is the same two commands with a newer tag; and if your clone predates this project being re-published, `git pull` will fail with `refusing to merge unrelated histories` — `git fetch origin && git reset --hard origin/main` is the way through (keep any local changes first).",
+  "notes": "Everything in this release is about *getting the Android app built and downloaded*, plus the app's launcher icon. There is no database change, no breaking change, and nothing about how your photos are stored or served. On a Docker install the headline is that building an APK no longer needs an image rebuild: `compose.yaml` mounts the APK directory into the API, so a build is downloadable the moment it finishes. The builder image also carried the wrong Android platform, which made every build fail inside Gradle at the last step; that is fixed. Rebuild your APK if you want the new launcher icon. It is a proper adaptive icon now, instead of a square bitmap that each launcher crops to its own shape.",
   "upgrade": {
     "breaking": false,
     "migrations": false,
     "backupFirst": false
   },
   "android": {
-    "version": "2.0.0",
-    "rebuild": false
+    "version": "2.0.2",
+    "rebuild": true
   },
-  "url": "https://github.com/mushroomhollow/spore-photos/releases/tag/v2.0.1"
+  "url": "https://github.com/mushroomhollow/spore-photos/releases/tag/v2.0.2"
 }

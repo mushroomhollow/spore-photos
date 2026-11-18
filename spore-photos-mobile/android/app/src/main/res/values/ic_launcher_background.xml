@@ -1,4 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The adaptive icon's background layer. A colour resource is a legitimate drawable
+  here, and one flat colour is all a retro icon needs — it also means the
+  background cannot disagree with the generated bitmaps, since both come from this
+  one value (spore-photos-mobile/scripts/generate-icons.sh checks that they match).
+
+  retro-cream, from the web UI's palette, and the same colour the icon has always
+  used — the problem was never the colour, it was that the launcher was cropping a
+  square bitmap instead of masking proper layers.
+-->
 <resources>
-    <color name="ic_launcher_background">#066176</color>
+    <color name="ic_launcher_background">#ead4ab</color>
 </resources>

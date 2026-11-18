@@ -197,6 +197,14 @@ newer server the UI shows a version-mismatch banner.
 > predates this repository being re-published, so the two histories share nothing.
 > Keep any local changes, then `git fetch origin && git reset --hard origin/main`
 > and continue with the build above.
+>
+> **If you added a `docker/compose.override.yaml` to make the Android APK
+> downloadable**, delete it. That file was the workaround for the API serving
+> `/apk/…` out of its own image; `compose.yaml` now mounts
+> `spore-photos-client/public/apk` into the API directly. An override that
+> survives an upgrade keeps mounting the directory into the *served* path as well,
+> which shadows whatever the image has baked in. It is untracked, so `git pull`
+> will never remove it for you.
 
 ---
 
@@ -229,7 +237,7 @@ and copy the library back to `LIBRARY_PATH`.
 | Uploads fail, files never appear | `LIBRARY_PATH` not writable by `PUID:PGID` — set `CHOWN_RECURSIVE=true` once, or fix ownership on the host |
 | Everything looks like `172.x.x.x` in the admin view | Behind a proxy without `TRUST_PROXY=true` |
 | Login appears to work but the session drops | Serving over HTTPS through a proxy without `TRUST_PROXY=true` (cookie stays non-`Secure`) |
-| "Download App" says no APK | The project does not ship an app binary — each server owner builds their own. See [BUILD-APK.md](BUILD-APK.md) (`./scripts/build-apk.sh --check`, then `--init-keystore`, then `build`). The finished APK lands in `spore-photos-client/public/apk/` under its versioned name |
+| "Download App" says no APK | The project does not ship an app binary — each server owner builds their own. See [BUILD-APK.md](BUILD-APK.md) and its *The fastest path: build inside a container* section: `docker compose --profile build build builder`, then `--check`, then `--init-keystore`, then `build` — and finally `docker compose up -d --build`, because the API answers `/apk/…` out of the app image. The APK lands in `spore-photos-client/public/apk/` under its versioned name |
 | Large video rejected with `413` or "too large" | Cloudflare plan limit (100 MB Free/Pro) — upload over LAN/Tailscale; otherwise check `client_max_body_size` and `MAX_UPLOAD_MB` agree |
 | `docker compose build` fails on a missing buildx | Install the buildx plugin, or build with `DOCKER_BUILDKIT=0 docker build -f docker/Dockerfile -t spore-photos .` |
 

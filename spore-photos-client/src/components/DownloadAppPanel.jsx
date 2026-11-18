@@ -157,6 +157,11 @@ export default function DownloadAppPanel({ user }) {
   const state = status?.state;
   const available = status?.available || [];
   const latest = available[0] || null;
+  // The build recipe for this install shape, from the server (the same source
+  // the upgrade steps come from), so a container operator is handed commands
+  // that work where they are rather than a button that cannot work here.
+  const buildPath = status?.buildPath || null;
+  const buildCommands = (buildPath?.steps || []).join('\n');
   const installCommands = [
     "# JDK 17+ (21 recommended)",
     status?.hints?.java || 'install a JDK 17 or newer',
@@ -164,7 +169,11 @@ export default function DownloadAppPanel({ user }) {
     '# Android SDK command-line tools, then:',
     "export ANDROID_HOME=/opt/android-sdk",
     "sdkmanager --licenses",
-    "sdkmanager 'platform-tools' 'build-tools;35.0.0' 'platforms;android-35'",
+    // The compile SDK and build-tools are different numbers on purpose: the
+    // project compiles against API 36, while build-tools is whatever the Android
+    // Gradle Plugin wants (35.0.0 for AGP 8.13.0). Installing only a newer
+    // build-tools removes the one Gradle asks for.
+    "sdkmanager 'platform-tools' 'build-tools;35.0.0' 'platforms;android-36'",
   ].join('\n');
 
   return (
@@ -223,17 +232,47 @@ export default function DownloadAppPanel({ user }) {
             <p className="text-sm text-retro-navy/60">Reading the build status…</p>
           )}
 
-          {/* State 1: the machine cannot build. Say so, and say exactly what fixes it. */}
+          {/* State 1a: a container. It cannot build here — but building is
+              supported, on the host, and the last command is the one that makes
+              the APK downloadable. Not a button, because the machine this panel
+              is talking about is not the machine that runs it. */}
+          {state === 'build_on_host' && buildPath && (
+            <div className="max-w-2xl space-y-3">
+              <div className="flex items-start gap-2 text-sm text-retro-navy bg-retro-mint/15 border border-retro-mint/40 rounded-lg px-3 py-2.5">
+                <Info size={16} className="text-retro-teal shrink-0 mt-0.5" />
+                <span>
+                  This server runs in a container, so it carries no Android SDK and cannot
+                  build the app itself. The build runs {buildPath.where} — copy the
+                  commands below. The last one is what makes the APK downloadable: the
+                  API serves it out of the container image.
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs font-semibold text-retro-navy/70">Build the app for v{status?.version}</span>
+                <CopyButton text={buildCommands} label="Copy commands" />
+              </div>
+              <pre className="overflow-x-auto rounded-lg bg-retro-navy text-retro-white text-xs p-3 font-mono leading-relaxed">
+{buildCommands}
+              </pre>
+              {buildPath.note && (
+                <div className="text-xs text-retro-navy/60">{buildPath.note}</div>
+              )}
+              <div className="text-xs text-retro-navy/60">
+                Full instructions: <span className="font-mono">{buildPath.docs}</span>
+              </div>
+            </div>
+          )}
+
+          {/* State 1b: no Android project in this installation at all. */}
           {state === 'unavailable' && (
             <div className="max-w-2xl space-y-3">
               <div className="flex gap-2 text-sm text-retro-navy bg-retro-mint/15 border border-retro-mint/40 rounded-lg px-3 py-2.5">
                 <Info size={16} className="text-retro-teal shrink-0 mt-0.5" />
                 <span>
-                  This installation has no Android build script — a container image
-                  built from the Dockerfile does not include the Android project. Build
-                  from a checkout of the source:
-                  <span className="font-mono text-xs"> docker compose --profile build run --rm builder build</span>
-                  , or follow <span className="font-mono text-xs">docs/BUILD-APK.md</span>.
+                  This installation has no Android build project, and no container to
+                  build in — spore-photos-mobile is missing from the source. Build from
+                  a full checkout of the source, following
+                  <span className="font-mono text-xs"> docs/BUILD-APK.md</span>.
                 </span>
               </div>
             </div>

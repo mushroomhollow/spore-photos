@@ -133,6 +133,13 @@ built SPA; `docker/compose.yaml` runs it twice (`api`, `share`) beside Postgres.
   Download App panel explains this when no APK is present. Never commit an APK
   or a keystore, and always keep the version number in the APK filename — a
   stable filename is a URL a CDN will serve from cache after a release.
+- Where an APK is *served* from is resolved, never assumed: `lib/apkDir.js`
+  prefers `spore-photos-client/public/apk` (a build on this host) and falls back
+  to `spore-photos-client/dist/apk` (the only one a container image has, and
+  inside the web root the server serves). The `/apk` static mount and the panel's
+  listing both go through it, so they cannot disagree. A container build is not
+  finished until the app image is rebuilt — `docker compose up -d --build` —
+  because the API answers `/apk/…` out of that image.
 
 ### Versions and updates
 
@@ -157,7 +164,9 @@ built SPA; `docker/compose.yaml` runs it twice (`api`, `share`) beside Postgres.
   header, and only to GitHub hosts — a token must never follow an
   operator-supplied URL.
 - Any new fetch path needs a test in `spore-photos-server/test/`. `npm test`
-  runs the suite; there is no build step for the server.
+  runs the suite; there is no build step for the server. Run `npm ci` there first —
+  some tests import runtime dependencies (`express`, `fs-extra`), so from a bare
+  clone they fail as `MODULE_NOT_FOUND` rather than as real failures.
 
 See [`docs/DOCKER.md`](docs/DOCKER.md) for the user-facing guide.
 

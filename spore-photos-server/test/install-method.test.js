@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detect, upgradeSteps } = require('../lib/installMethod');
+const { detect, upgradeSteps, buildSteps } = require('../lib/installMethod');
 
 const none = () => false;
 
@@ -122,4 +122,46 @@ test('upgrade warnings come from the release metadata', () => {
 test('no metadata means no scary warnings', () => {
   const out = upgradeSteps('docker', { latest: '2.1.0', current: '2.0.0', upgrade: {} });
   assert.deepEqual(out.warnings, []);
+});
+
+test('a container install that serves from its image is told to rebuild it', () => {
+  const out = buildSteps('docker', { version: '2.0.1', apkWritable: false });
+  assert.match(out.steps[out.steps.length - 1], /docker compose up -d --build/);
+  assert.match(out.note, /not downloadable until that image is rebuilt/i);
+});
+
+test('a container install that mounts the APK directory is not told to rebuild', () => {
+  // The shipped compose file mounts it, so the build is live at once; requiring a
+  // rebuild there would send an operator to do work that changes nothing.
+  const out = buildSteps('docker', { version: '2.0.1', apkWritable: true });
+  assert.ok(!/up -d --build/.test(out.steps.join('\n')), 'no pointless rebuild step');
+  assert.match(out.note, /as soon as it is built/i);
+  assert.match(out.note, /PUID/, 'still names the ownership requirement');
+});
+
+test('the container build recipe ends with the step that publishes the APK', () => {
+  // The finding this encodes: the old container advice was one command, and it
+  // produced an APK the running API could not serve. The recipe has to end with
+  // the image rebuild or it is not a recipe.
+  const out = buildSteps('docker', { version: '2.0.1' });
+  assert.equal(out.docs, 'docs/BUILD-APK.md');
+  assert.match(out.steps.join('\n'), /builder build 2\.0\.1/);
+  assert.match(out.steps[out.steps.length - 1], /docker compose up -d --build/);
+  assert.match(out.note, /404/);
+});
+
+test('the manual build recipe is the script, and never the container step', () => {
+  const out = buildSteps('manual', { version: '2.0.1' });
+  assert.match(out.steps[0], /spore-photos-mobile/);
+  assert.match(out.steps.join('\n'), /build-apk\.sh build 2\.0\.1/);
+  assert.ok(!/up -d --build/.test(out.steps.join('\n')), 'no container-only step on a plain host');
+});
+
+test('a version is interpolated without doubling the v', () => {
+  assert.match(buildSteps('docker', { version: 'v2.0.1' }).steps.join('\n'), /builder build 2\.0\.1/);
+});
+
+test('an unknown version still yields a runnable recipe', () => {
+  const out = buildSteps('manual', {});
+  assert.match(out.steps.join('\n'), /build-apk\.sh build$/m);
 });

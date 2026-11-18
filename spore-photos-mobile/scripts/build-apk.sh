@@ -34,11 +34,63 @@ DEFAULT_KEYSTORE="$REPO_ROOT/spore-photos-server/data/android-keystore.jks"
 DEFAULT_OUT="$CLIENT_DIR/public/apk"
 DEFAULT_ALIAS="spore-photos"
 
+# The versions the project actually builds against, read from the two files that
+# decide them rather than pinned here. variables.gradle holds the compile SDK;
+# build-tools is the Android Gradle Plugin's own default and does not track it
+# (AGP 8.13.0 wants 35.0.0 while compiling against API 36 — installing 36.0.0 to
+# "match" removes the component Gradle asks for). scripts/check-release.js asserts
+# the builder image against both.
+VARIABLES_GRADLE="$ANDROID_DIR/variables.gradle"
+COMPILE_SDK="$(sed -n 's/.*compileSdkVersion[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$VARIABLES_GRADLE" 2>/dev/null | head -n1)"
+COMPILE_SDK="${COMPILE_SDK:-36}"
+AGP_BUILD_TOOLS="35.0.0"
+
 # ─── Output helpers ──────────────────────────────────────────────────────────
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n=== %s\n' "$*"; }
 warn() { printf '  ! %s\n' "$*" >&2; }
 die()  { printf '  ERROR: %s\n' "$*" >&2; exit "${2:-1}"; }
+
+# ─── Context helpers ─────────────────────────────────────────────────────────
+# Inside the builder image this script is reached as a compose service, not as a
+# path: WORKDIR is /repo, and ./scripts/ resolves to the repository's own scripts/
+# directory — which exists and holds no such script, so a native hint there fails
+# in a more confusing way than "not found". The hints below are read by whoever is
+# driving the build, who is outside the container even when the script is not.
+in_container() { [ -f /.dockerenv ] || [ -f /run/.containerenv ]; }
+
+# The next command a human should type, with a version interpolated.
+next_command() { # next_command <args…>
+  if in_container; then
+    printf 'docker compose --profile build run --rm builder %s   # in the directory holding your compose file' "$*"
+  else
+    printf 'cd %s && ./scripts/build-apk.sh %s' "$MOBILE_DIR" "$*"
+  fi
+}
+
+dir_writable() { # 0 when this script could create and write in <dir>
+  local d="$1"
+  while [ ! -d "$d" ] && [ "$d" != "/" ]; do d="$(dirname "$d")"; done
+  [ -w "$d" ]
+}
+
+# This script writes into the checkout (the key, the APK), so it has to be able
+# to. Checked before a passphrase is typed and before anything is built: failing
+# here used to be a bare "mkdir: Permission denied" naming neither the directory,
+# the uid, nor the fix — the one place the script broke its own rule that every
+# failure prints the command that resolves it.
+require_writable() { # require_writable <dir> <what>
+  local dir="$1" what="$2" owner
+  dir_writable "$dir" && return 0
+  owner="$(stat -c '%u:%g' "$dir" 2>/dev/null || stat -c '%u:%g' "$(dirname "$dir")" 2>/dev/null || echo unknown)"
+  die "cannot write $what at $dir
+  that path is owned by ${owner}, and this script is running as uid $(id -u).
+  Run the build as the checkout's owner, or give that owner the tree:
+      chown -R <uid>:<gid> $REPO_ROOT
+  with the Docker builder the uid that matters is PUID/PGID from docker/.env
+  (default 1000:1000). If you also run git as another user, allow the tree:
+      git config --global --add safe.directory $REPO_ROOT" 4
+}
 
 usage() {
   sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
@@ -58,10 +110,18 @@ Environment:
   JAVA_HOME            JDK 17+ (a JDK 21 is detected automatically if present)
   ANDROID_HOME         Android SDK (probed at the usual locations if unset)
 
-Examples:
+Examples (native):
+  cd spore-photos-mobile
   ./scripts/build-apk.sh --check
   ./scripts/build-apk.sh --init-keystore
   SPORE_KEYSTORE_PASS=… ./scripts/build-apk.sh build
+
+Examples (inside the builder image — the entry point is the compose service):
+  cd docker
+  docker compose --profile build build builder
+  docker compose --profile build run --rm builder --check
+  docker compose --profile build run --rm builder --init-keystore
+  SPORE_KEYSTORE_PASS=… docker compose --profile build run --rm builder build
 USAGE
 }
 
@@ -149,7 +209,9 @@ hint_java() {
 hint_sdk() {
   PKG_HINT_SDK="install the Android SDK command-line tools, then:
     sdkmanager --licenses
-    sdkmanager 'platform-tools' 'build-tools;35.0.0' 'platforms;android-35'
+    sdkmanager 'platform-tools' 'build-tools;$AGP_BUILD_TOOLS' 'platforms;android-$COMPILE_SDK'
+  (the compile SDK — $COMPILE_SDK, from variables.gradle — and build-tools are not
+  the same number: build-tools is whatever the Gradle plugin wants)
   and export ANDROID_HOME to the SDK root"
 }
 
@@ -218,10 +280,12 @@ find_apksigner() {
 PLATFORM_DIR=""
 find_platform() {
   [ -n "$ANDROID_SDK" ] || return 1
-  local latest
-  latest="$(ls -1 "$ANDROID_SDK/platforms" 2>/dev/null | sort -V | tail -n1)"
-  [ -n "$latest" ] || return 1
-  PLATFORM_DIR="$ANDROID_SDK/platforms/$latest"
+  # Exactly the compile SDK, not merely the newest platform installed. A machine
+  # with only an older platform "passes" a check that looks for any of them and
+  # then fails inside Gradle, after Gradle has tried to download the right one.
+  local dir="$ANDROID_SDK/platforms/android-$COMPILE_SDK"
+  [ -d "$dir" ] || return 1
+  PLATFORM_DIR="$dir"
 }
 
 KEYTOOL=""
@@ -267,7 +331,7 @@ run_check() {
     fi
   fi
 
-  [ -n "$JAVA_BIN" ] && [ -n "$ANDROID_SDK" ] && [ -n "$BUILD_TOOLS" ] && [ -n "$APKSIGNER" ] || ready=0
+  [ -n "$JAVA_BIN" ] && [ -n "$ANDROID_SDK" ] && [ -n "$BUILD_TOOLS" ] && [ -n "$APKSIGNER" ] && [ -n "$PLATFORM_DIR" ] || ready=0
   if [ "$ready" = 0 ]; then exit_code=2
   elif ! keystore_present; then ready=0; exit_code=3; fi
 
@@ -289,7 +353,12 @@ run_check() {
       "$KEYSTORE" "$([ "$ks_present" = yes ] && echo true || echo false)" "$ALIAS" \
       "$([ -n "$ks_fp" ] && printf '"%s"' "$ks_fp" || echo null)"
     printf '  "outDir": "%s",\n' "$OUT_DIR"
-    printf '  "hints": {"java": "%s", "sdk": "%s"}\n' "$(printf '%s' "$PKG_HINT_JAVA" | tr '\n' ' ')" "$(printf '%s' "$PKG_HINT_SDK" | tr '\n' ' ')"
+    # Only what is actually missing: an install hint for a tool that was just
+    # found reads as a contradiction.
+    local hints=""
+    [ -n "$JAVA_BIN" ]   || hints="${hints}${hints:+, }\"java\": \"$(printf '%s' "$PKG_HINT_JAVA" | tr '\n' ' ')\""
+    [ -n "$ANDROID_SDK" ] || hints="${hints}${hints:+, }\"sdk\": \"$(printf '%s' "$PKG_HINT_SDK" | tr '\n' ' ')\""
+    printf '  "hints": {%s}\n' "$hints"
     printf '}\n'
     exit "$exit_code"
   fi
@@ -301,11 +370,16 @@ run_check() {
   say "  java home          ${JAVA_HOME:-unset}"
   say "  android sdk        ${ANDROID_SDK:-MISSING}"
   say "  build-tools        ${BUILD_TOOLS:-MISSING}"
-  say "  platform           ${PLATFORM_DIR:-MISSING}"
+  say "  platform           ${PLATFORM_DIR:-MISSING (android-$COMPILE_SDK is what variables.gradle requires)}"
   say "  apksigner          ${APKSIGNER:-MISSING}"
   say "  keystore           ${KEYSTORE}"
   say "  keystore present   ${ks_present}${ks_fp:+  (sha256 ${ks_fp})}"
   say "  output directory   ${OUT_DIR}"
+  dir_writable "$(dirname "$KEYSTORE")" || {
+    warn "the signing-key directory is not writable by uid $(id -u): $(dirname "$KEYSTORE")"
+    warn "  fix: chown -R <uid>:<gid> $REPO_ROOT   (Docker: PUID/PGID from docker/.env)"
+  }
+  dir_writable "$OUT_DIR" || warn "the APK output directory is not writable by uid $(id -u): $OUT_DIR"
 
   if [ "$exit_code" = 2 ]; then
     say ""
@@ -321,11 +395,11 @@ run_check() {
     say "  you to every phone you install the app on, and it is the only thing"
     say "  that can update an install you have already made:"
     say ""
-    say "    ./scripts/build-apk.sh --init-keystore"
+    say "    $(next_command --init-keystore)"
   else
     say ""
     say "  Ready to build:"
-    say "    ./scripts/build-apk.sh build ${TARGET_VERSION}"
+    say "    $(next_command "build ${TARGET_VERSION}")"
   fi
   exit "$exit_code"
 }
@@ -344,6 +418,7 @@ run_init_keystore() {
     $PKG_HINT_JAVA" 2
   hint_java
   find_keytool || die "keytool not found (it ships with the JDK)" 2
+  require_writable "$(dirname "$KEYSTORE")" "the signing key"
 
   local pass="${SPORE_KEYSTORE_PASS:-}"
   if [ -z "$pass" ]; then
@@ -376,7 +451,7 @@ run_init_keystore() {
   say "  Back this file up somewhere safe, and never commit it. Anyone who has"
   say "  it can sign a build that your phones will accept as an update."
   say ""
-  say "  Next: ./scripts/build-apk.sh build ${TARGET_VERSION}"
+  say "  Next: $(next_command "build ${TARGET_VERSION}")"
 }
 
 # ─── Mode: build ─────────────────────────────────────────────────────────────
@@ -390,13 +465,19 @@ run_build() {
     $PKG_HINT_SDK" 2; }
   find_build_tools || { hint_sdk; die "no build-tools in $ANDROID_SDK:
     $PKG_HINT_SDK" 2; }
+  find_platform || { hint_sdk; die "no Android platform android-$COMPILE_SDK in $ANDROID_SDK/platforms:
+    the project compiles against API $COMPILE_SDK (spore-photos-mobile/android/variables.gradle),
+    and Gradle cannot install it into an SDK directory it does not own.
+    $PKG_HINT_SDK" 2; }
   find_apksigner || die "apksigner not found (expected in $BUILD_TOOLS)" 2
   find_keytool || die "keytool not found — it ships with the JDK, so check \$JAVA_HOME" 2
+  require_writable "$(dirname "$KEYSTORE")" "the signing key"
+  require_writable "$OUT_DIR" "the APK"
 
   local pass="${SPORE_KEYSTORE_PASS:-}"
   if ! keystore_present; then
     die "no signing key at $KEYSTORE. Create one first:
-    ./scripts/build-apk.sh --init-keystore" 4
+    $(next_command --init-keystore)" 4
   fi
   if [ -z "$pass" ]; then
     if [ -t 0 ]; then
@@ -448,9 +529,22 @@ run_build() {
     say "  web assets: reusing the existing build (--skip-client-build)"
   else
     say "  web assets: building the client…"
-    ( cd "$CLIENT_DIR" && npm run build >/dev/null )
+    # A checkout does not imply installed dependencies, and vite is a
+    # devDependency: nothing on the container path ran `npm ci` for the client
+    # (the Dockerfile and INSTALL.md §6 both do, this script did not), so a fresh
+    # checkout failed at the first command with a bare `vite: not found`. Same
+    # guard as the mobile project below.
+    ( cd "$CLIENT_DIR" && [ -d node_modules ] || npm ci --no-audit --no-fund >/dev/null 2>&1 || npm install --no-audit --no-fund >/dev/null 2>&1 ) \
+      || die "could not install the client's dependencies in $CLIENT_DIR:
+    cd $CLIENT_DIR && npm ci"
+    # Output left visible, and the failure caught here: under `set -e` a failing
+    # npm build exited the script before the message below could be reached, and
+    # the redirect discarded npm's explanation with it.
+    ( cd "$CLIENT_DIR" && npm run build ) \
+      || die "the client build failed (output above). On its own:
+    cd $CLIENT_DIR && npm run build"
   fi
-  [ -d "$CLIENT_DIR/dist" ] || die "no client build at $CLIENT_DIR/dist"
+  [ -f "$CLIENT_DIR/dist/index.html" ] || die "no client build at $CLIENT_DIR/dist"
 
   say "  web assets: syncing into the Android project…"
   ( cd "$MOBILE_DIR" && [ -d node_modules ] || npm ci --no-audit --no-fund >/dev/null 2>&1 || npm install --no-audit --no-fund >/dev/null 2>&1 )

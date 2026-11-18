@@ -33,7 +33,15 @@ RUN apt-get update \
 # ─── Android SDK ──────────────────────────────────────────────────────────────
 # Versions are arguments so an operator can bump them without editing the file.
 ARG CMDLINE_TOOLS_BUILD=11076708
-ARG ANDROID_PLATFORM=android-35
+# The platform has to match spore-photos-mobile/android/variables.gradle
+# (compileSdkVersion) — the project compiles against API 36, and an image carrying
+# a different platform makes Gradle try to install the right one at build time,
+# which fails on a root-owned SDK directory with "The SDK directory is not
+# writable" *after* a download. Build-tools deliberately does NOT move with it:
+# AGP 8.13.0's default is 35.0.0, and installing 36.0.0 to "match" the compile SDK
+# removes the component Gradle actually asks for. Both are checked by
+# scripts/check-release.js. Override either with --build-arg.
+ARG ANDROID_PLATFORM=android-36
 ARG ANDROID_BUILD_TOOLS=35.0.0
 
 ENV ANDROID_HOME=/opt/android-sdk \
@@ -55,8 +63,13 @@ RUN yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/
 ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
 
 # The repository is bind-mounted here at run time (see compose.yaml), so the
-# script, the keystore and the output directory are the host's own — an APK
-# built here lands exactly where the server serves it from.
+# script, the keystore and the output directory are the host's own. The APK lands
+# in the host's spore-photos-client/public/apk. Whether that is downloadable at once
+# depends on the API, so it is not stated as an absolute here: the shipped
+# compose.yaml mounts this same directory into the API, and a build there is
+# live-served immediately, while an install whose compose file predates that mount
+# answers /apk/... out of its own image and needs `docker compose up -d --build`.
+# The Download App panel reports which of the two applies.
 WORKDIR /repo
 
 ENTRYPOINT ["bash", "spore-photos-mobile/scripts/build-apk.sh"]

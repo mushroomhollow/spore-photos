@@ -7,6 +7,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const config = require('./config');
 const pool = require('./db/pool');
+const apkDir = require('./lib/apkDir');
 
 // Import middleware
 const { blacklistCheck } = require('./middleware/whitelistCheck');
@@ -145,10 +146,27 @@ app.use((req, res, next) => {
 const clientDist = path.resolve(__dirname, '..', 'spore-photos-client', 'dist');
 const clientIndex = path.join(clientDist, 'index.html');
 if (fs.existsSync(clientIndex)) {
+  // APKs are served from a resolved directory rather than from the web root. A
+  // native install writes them to spore-photos-client/public/apk and only copies
+  // them into dist/ on the next client build, so serving the web root alone 404s
+  // a build that just succeeded; a container image has them in dist/apk only.
+  // The Download App panel lists through this same resolver, so what it offers and
+  // what downloads resolve the same way — but that has to happen per *request*, not
+  // once at boot. Pinned at boot it froze the choice for the life of the process: an
+  // install whose image baked an APK into dist/apk pins that directory at startup,
+  // and a later build landing in the mounted public/apk is then listed by the panel
+  // (which re-resolves) and 404s here. Two readdir calls on a request that streams
+  // several megabytes cost nothing.
+  app.use('/apk', (req, res, next) => {
+    express.static(apkDir.resolve(), { index: false, dotfiles: 'deny' })(req, res, next);
+  });
   app.use(express.static(clientDist));
   app.use((req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
     if (req.path.startsWith('/api') || req.path.startsWith('/share')) return next();
+    // A missing APK has to 404: handing a phone the app's index.html named .apk
+    // is a worse failure than no file at all.
+    if (req.path.startsWith('/apk')) return next();
     res.sendFile(clientIndex);
   });
 }

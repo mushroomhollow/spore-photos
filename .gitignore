@@ -37,7 +37,10 @@ Pictures/
 spore-photos-mobile/android/app/build/
 spore-photos-mobile/android/.gradle/
 spore-photos-mobile/android/local.properties
-spore-photos-client/public/apk/
+# The directory itself is tracked (a .gitkeep) so a fresh clone has it before
+# Docker or the builder ever touches it; the APKs inside are not.
+spore-photos-client/public/apk/*
+!spore-photos-client/public/apk/.gitkeep
 
 # The Android signing key belongs to whoever builds the app — never the repo.
 # Keep it out of git and out of a shared checkout; losing it means existing

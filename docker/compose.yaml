@@ -51,6 +51,16 @@ services:
       SHARE_SERVER_PORT: "4052"
     ports:
       - "${APP_PORT:-4051}:4051"
+    volumes:
+      - ${LIBRARY_PATH:-./library}:/data/photos
+      # The APK a build writes is served straight out of here, so publishing one
+      # needs no image rebuild — the builder profile writes into this directory on
+      # the host, and the API reads it live. The directory is shipped by the
+      # repository (a .gitkeep keeps it present); Docker creates a *missing*
+      # bind-mount source as root, and then the builder, running as PUID, cannot
+      # write into it. The `volumes:` list is repeated here because a service-level
+      # key replaces the anchor's rather than merging with it.
+      - ../spore-photos-client/public/apk:/app/spore-photos-client/public/apk
     depends_on:
       db:
         condition: service_healthy
@@ -102,12 +112,15 @@ services:
       SPORE_KEYSTORE_PASS: ${SPORE_KEYSTORE_PASS:-}
     volumes:
       - ..:/repo
-      # Rebuilds are much faster with a persistent Gradle cache. Create the
-      # directory first so it is not created root-owned:
-      #   mkdir -p gradle-cache
-      # - ./gradle-cache:/tmp/.gradle
+      # A persistent Gradle cache. Without one, every build re-downloads the
+      # Android Gradle Plugin and its dependencies — the slow part of a first
+      # build. A named volume rather than a bind mount, so Docker owns the
+      # directory's ownership and there is no host directory to create first.
+      - spore-gradle-cache:/tmp/.gradle
     # Gradle is memory-hungry; uncomment to keep it from upsetting a small host.
     # mem_limit: 4g
 
 volumes:
   pgdata:
+  spore-gradle-cache:
+

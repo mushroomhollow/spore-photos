@@ -458,6 +458,11 @@ sudo systemctl restart spore-photos spore-photos-share
 > `git pull` and the `npm` steps have to run as it (`sudo -u spore …`), not as
 > you. The service only needs read access at runtime; it is the upgrade that
 > writes.
+>
+> Whoever runs the git steps owns the tree afterwards. If you also build the
+> Android app as a different uid — the Docker builder runs as `PUID`/`PGID`, not
+> as root — then run the git steps as that uid too, or re-`chown` the checkout
+> after each update. `docs/BUILD-APK.md` (*Ownership*) has the details.
 
 `VERSION` is the release version for everything. If you upgrade the server but
 not the built client (or vice versa), the UI shows a version-mismatch banner

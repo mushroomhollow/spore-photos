@@ -134,6 +134,43 @@ if (current) {
   }
 }
 
+// ── the Android build agrees with the Android project ───────────────────────
+// Whether an APK can be built at all is decided by two hand-maintained values in
+// two files, and nothing used to connect them: the compile SDK the project wants
+// (variables.gradle) and the platform the builder image installs
+// (docker/Dockerfile.builder). Disagree, and Gradle downloads the missing platform
+// at build time and fails with "The SDK directory is not writable" — a message
+// about permissions, for a problem that is a version mismatch.
+//
+// Build-tools is deliberately not tied to the compile SDK: it is the Android
+// Gradle Plugin's own default (35.0.0 for AGP 8.13.0), so it is asserted at a
+// recorded value instead of being inferred from the platform. Bump this only when
+// the plugin in android/build.gradle moves.
+const AGP_BUILD_TOOLS = '35.0.0';
+
+const variablesGradle = path.join(notes.REPO_ROOT, 'spore-photos-mobile', 'android', 'variables.gradle');
+const builderDockerfile = path.join(notes.REPO_ROOT, 'docker', 'Dockerfile.builder');
+if (fs.existsSync(variablesGradle) && fs.existsSync(builderDockerfile)) {
+  const compileSdk = (/compileSdkVersion\s*=\s*(\d+)/.exec(fs.readFileSync(variablesGradle, 'utf8')) || [])[1];
+  const dockerfile = fs.readFileSync(builderDockerfile, 'utf8');
+  const platform = (/^ARG ANDROID_PLATFORM=(\S+)/m.exec(dockerfile) || [])[1];
+  const buildTools = (/^ARG ANDROID_BUILD_TOOLS=(\S+)/m.exec(dockerfile) || [])[1];
+
+  if (!compileSdk) {
+    problem('spore-photos-mobile/android/variables.gradle has no compileSdkVersion to check the builder image against');
+  } else if (platform !== `android-${compileSdk}`) {
+    problem(`docker/Dockerfile.builder installs ${platform} but the project compiles against API ${compileSdk} (variables.gradle) — Gradle would fetch the platform at build time and fail on the SDK directory`);
+  } else {
+    ok(`the builder image's platform matches compileSdkVersion ${compileSdk}`);
+  }
+
+  if (buildTools !== AGP_BUILD_TOOLS) {
+    problem(`docker/Dockerfile.builder installs build-tools ${buildTools}; the Gradle plugin wants ${AGP_BUILD_TOOLS} (a newer build-tools does not replace it) — update AGP_BUILD_TOOLS in scripts/check-release.js if the plugin changed`);
+  } else {
+    ok(`the builder image's build-tools is ${AGP_BUILD_TOOLS}, as the plugin requires`);
+  }
+}
+
 // ── report ──────────────────────────────────────────────────────────────────
 for (const line of oks) console.log(`  ok    ${line}`);
 for (const line of problems) console.log(`  FAIL  ${line}`);

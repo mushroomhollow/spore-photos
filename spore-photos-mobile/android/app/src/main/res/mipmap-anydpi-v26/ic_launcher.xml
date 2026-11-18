@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher icon, adaptive form (API 26+).
+
+  This file not existing was the whole bug. Without it a launcher has nothing to
+  build an icon from, so it falls back to the legacy mipmap-*/ic_launcher.png — a
+  full-bleed square bitmap with no notion of a mask — and crops that square to its
+  own shape. On a launcher that uses circles, that is exactly "a blocky square
+  image inside the circle".
+
+  The layers are a flat brand background and the mark; a launcher supplies the
+  shape. The monochrome layer is for Android 13+ themed icons, which tint it with
+  the system palette using the alpha channel only, so it needs no artwork of its
+  own — the same vector serves.
+
+  ic_launcher_round.xml is deliberately identical: roundIcon exists for launchers
+  that want a rounder shape, and the adaptive format is already shape-agnostic.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>

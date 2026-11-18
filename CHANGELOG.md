@@ -7,6 +7,79 @@ All notable changes to Spore-Photos are recorded here. The format follows
 The release script puts the newest section into `release.json`, which is what
 other installs read when they check for updates.
 
+## [2.0.2] — 2026-11-18
+
+### Changed
+
+- **The Android launcher icon is a proper adaptive icon.** It was a full-bleed
+  square bitmap that the launcher cropped to its own shape, so on a circular
+  launcher it looked like a square image inside a circle. The layers the platform
+  actually wants were half-present: the background and foreground existed, but the
+  two `mipmap-anydpi-v26/` files that compose them never did, so Android 8+ ignored
+  all of it and fell back to the bitmaps. Those files now exist, the foreground is
+  the brand mark drawn as the stroke art it is (it was filling the paths, which
+  renders a blob), the legacy bitmaps are regenerated with a real circle for the
+  round variant, Android 13+ themed icons work via a monochrome layer, and
+  `spore-photos-mobile/scripts/generate-icons.sh` regenerates the whole set from
+  `logo.svg` so the next change is a command rather than an art project.
+
+### Fixed
+
+- **`/apk` resolves its directory per request, not once at startup.** Pinned at boot
+  it could disagree with the panel: an install whose image had baked an APK into
+  `dist/apk` resolved there on startup, and a later build landing in the mounted
+  `public/apk` was offered by the panel and 404'd by the server until a restart.
+  Reproduced, then fixed.
+- **The Download App panel no longer creates a directory to test one.** The
+  writability probe ran `mkdir -p` on a path the panel requests every time it opens,
+  which leaves a root-owned directory behind if the server runs as root. It tests the
+  nearest existing ancestor instead.
+- **The builder image's comment no longer contradicts the compose file.** It said a
+  build is not downloadable until the image is rebuilt — true of an install whose
+  compose file predates the APK mount, false of the shipped one.
+- **A container build now produces a downloadable APK.** The documented container
+  path was one command, but the builder writes the APK into the host checkout
+  while the running API answers `/apk/…` out of its own image — so the build
+  succeeded, the signature verified, and the download 404'd. The Download App
+  panel shows a container operator the full recipe — and asks for the image
+  rebuild only when the install genuinely serves from its image.
+- **A container build is published without rebuilding the app image.** The shipped
+  `compose.yaml` mounts `spore-photos-client/public/apk` into the API, so an APK is
+  served the moment it is built. The mount's directory ships with the repository,
+  since Docker creates a missing bind-mount source as root and the builder (PUID)
+  then cannot write into it.
+- **The builder image ships the Android platform the project compiles against.**
+  It carried API 35 while `variables.gradle` compiles against 36, so Gradle tried
+  to install the missing platform at build time and failed with `The SDK directory
+  is not writable`. Platform and build-tools are not the same number and must not
+  be matched up — AGP wants `build-tools;35.0.0` regardless — so the docs and the
+  panel's install commands say so, the script now requires exactly the platform
+  `variables.gradle` names, and `scripts/check-release.js` asserts the Dockerfile
+  against both values instead of leaving them to drift.
+- **An absent APK is a 404, not the web page.** A container serving from its image
+  answered `/apk/…` with `index.html` and HTTP 200, so a phone downloaded a
+  half-kilobyte "APK" and Android called it a broken package.
+- **The Download App panel lists APKs on a container install.** It read
+  `spore-photos-client/public/apk`, a directory a built image does not have, so it
+  reported no APK while the file downloaded fine. The listing and the `/apk` route
+  now resolve the same directory — the build output on a host, the served
+  directory in a container — and a missing APK returns 404 rather than the web app.
+- **The first APK build on a fresh checkout works.** `build` never installed the
+  client's dependencies and `vite` is a devDependency, so it failed with
+  `sh: 1: vite: not found`. The build's output is no longer discarded, and a real
+  failure reports itself instead of vanishing behind `set -e`.
+- **`--init-keystore` explains an unwritable checkout** instead of dying with
+  `mkdir: Permission denied` after the passphrase has been typed; `--check` warns
+  about it without changing its 0/2/3 exit contract.
+- **The build hints name a command that exists.** Every self-referential hint
+  hardcoded `./scripts/build-apk.sh`, which inside the builder resolves to
+  `/repo/scripts` — a real directory holding no such script. Hints are now
+  generated for whoever is driving the build.
+- **The Gradle cache is on by default**, as a named volume, so rebuilds stop
+  re-downloading the Android Gradle Plugin and nobody has to edit `compose.yaml`
+  to enable it.
+- `--check --json` no longer prints install hints for tools it just found.
+
 ## [2.0.1] — 2026-11-18
 
 ### Fixed

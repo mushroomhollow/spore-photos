@@ -27,10 +27,15 @@ const path = require('path');
 const { execFile, spawn } = require('child_process');
 
 const semver = require('../lib/semver');
+const apkDir = require('../lib/apkDir');
+const { detect, buildSteps } = require('../lib/installMethod');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 const SCRIPT = path.join(REPO_ROOT, 'spore-photos-mobile', 'scripts', 'build-apk.sh');
-const APK_DIR = path.join(REPO_ROOT, 'spore-photos-client', 'public', 'apk');
+// Where the APKs this server can actually serve live. Not a constant: a native
+// install keeps them in public/apk and a container image only has them in
+// dist/apk, which is what the server serves from. See lib/apkDir.js.
+const apkDirectory = () => apkDir.resolve();
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const LOG_PATH = path.join(DATA_DIR, 'apk-build.log');
 const RESULT_PATH = path.join(DATA_DIR, 'apk-build-result.json');
@@ -95,9 +100,10 @@ function probe() {
 
 /** The versioned APKs this server is actually serving, newest first. */
 async function listAvailable() {
+  const dir = apkDirectory();
   let files;
   try {
-    files = await fsp.readdir(APK_DIR);
+    files = await fsp.readdir(dir);
   } catch {
     return [];
   }
@@ -107,7 +113,7 @@ async function listAvailable() {
     const match = /^spore-photos-v(.+)\.apk$/.exec(filename);
     if (!match) continue;
     try {
-      const stat = await fsp.stat(path.join(APK_DIR, filename));
+      const stat = await fsp.stat(path.join(dir, filename));
       found.push({
         version: match[1],
         filename,
@@ -160,6 +166,32 @@ async function logTail(maxBytes = 4000) {
 }
 
 /**
+ * Whether this server could write into <target> — without creating anything.
+ *
+ * The panel asks on a GET it makes every time it opens, so a probe that mkdirs is a
+ * side effect on a read path, and it would leave a *root-owned* directory behind if
+ * the server ever ran as root. That is the trap the build script's require_writable()
+ * exists to report, so it is not one to introduce here.
+ *
+ * A path that does not exist yet is fine as long as its nearest existing ancestor is
+ * writable, which is exactly what a build needs.
+ */
+async function writableDir(target) {
+  let dir = target;
+  for (;;) {
+    try {
+      await fsp.access(dir, fs.constants.W_OK);
+      return true;
+    } catch (error) {
+      if (error.code !== 'ENOENT') return false; // exists, and is not writable
+      const parent = path.dirname(dir);
+      if (parent === dir) return false; // walked up to the root
+      dir = parent;
+    }
+  }
+}
+
+/**
  * The full picture for the Download App panel. Never throws: a settings screen
  * has to render even when the machine it is describing is in a strange state.
  */
@@ -169,20 +201,18 @@ async function status() {
   const check = await probe();
   const available = await listAvailable();
   const result = await readResult();
-  const apkDirWritable = await (async () => {
-    try {
-      await fsp.mkdir(APK_DIR, { recursive: true });
-      await fsp.access(APK_DIR, fs.constants.W_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
+  const method = detect().method;
+  const dir = apkDirectory();
+  const apkDirWritable = await writableDir(dir);
 
   return {
-    // 'ready' | 'no_toolchain' | 'no_keystore' | 'unavailable'
+    // 'ready' | 'no_toolchain' | 'no_keystore' | 'build_on_host' | 'unavailable'
+    //
+    // A container has no build script because the app image deliberately carries
+    // no 2 GB Android SDK — but building is still supported there, on the host,
+    // so calling that 'unavailable' would be wrong and would hide the recipe.
     state: !scriptAvailable()
-      ? 'unavailable'
+      ? (method === 'docker' ? 'build_on_host' : 'unavailable')
       : !check
         ? 'unavailable'
         : check.exitCode === 0
@@ -191,7 +221,17 @@ async function status() {
             ? 'no_keystore'
             : 'no_toolchain',
     scriptAvailable: scriptAvailable(),
+    method,
+    // Said out loud so a misdetection is visible rather than quietly wrong — the
+    // same reason installMethod.detect() reports its evidence.
+    methodEvidence: detect().evidence,
+    apkDir: apkDir.describe(dir),
     apkDirWritable,
+    // The build recipe for this install shape, generated like the upgrade steps
+    // so a container operator is not handed a command that cannot work here.
+    // apkWritable is passed in because it decides whether a build on a container
+    // install still needs an image rebuild before anyone can download it.
+    buildPath: buildSteps(method, { version: check?.version ?? null, apkWritable: apkDirWritable }),
     version: check?.version ?? null,
     versionCode: check?.versionCode ?? null,
     apkName: check?.apkName ?? null,
@@ -314,6 +354,7 @@ module.exports = {
   isBuilding,
   clearStaleLock,
   SCRIPT,
-  APK_DIR,
+  apkDirectory,
+  writableDir,
   LOG_PATH,
 };

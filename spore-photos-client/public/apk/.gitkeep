@@ -1,0 +1,3 @@
+# Keeps this directory present in a fresh clone. Docker creates a missing
+# bind-mount source directory as root, which the APK builder (PUID) then
+# cannot write into; the built APKs themselves are gitignored.
